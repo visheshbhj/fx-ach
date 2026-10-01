@@ -1,0 +1,14 @@
+01,021000021,ACMECORP,261001,1130,2,80,,2/                                      
+02,ACMECORP,021000021,1,261001,1130,USD,3/                                      
+03,5550001111,USD,030,1845000,,,060,1790000,,,100,355000,3,,400,110000,2,/      
+16,165,200000,0,ACH0001,PPD-778,PREAUTHORIZED ACH CREDIT ACME RETAIL/           
+16,195,125000,0,FW20261001A,,INCOMING WIRE FROM HOOLI INC/                      
+16,277,30000,0,ZBA0001,,ZBA CREDIT TRANSFER FROM 5550002222/                    
+16,455,90000,0,ACH0002,UTIL-OCT,PREAUTHORIZED ACH DEBIT CITY POWER/             
+16,661,20000,0,FEE0001,,ACCOUNT ANALYSIS FEE SEPTEMBER/                         
+49,4565000,7/                                                                   
+03,5550002222,USD,030,0,,,060,0,,,400,30000,1,/                                 
+16,577,30000,0,ZBA0001,,ZBA DEBIT TRANSFER TO 5550001111/                       
+49,60000,3/                                                                     
+98,4625000,2,12/                                                                
+99,4625000,1,14/                                                                

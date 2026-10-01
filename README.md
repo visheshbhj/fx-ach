@@ -11,6 +11,8 @@ A desktop app for reading, building and editing NACHA ACH files, with every
   are recalculated for you.
 - **Validate** control totals, hashes, routing check digits, trace numbers,
   addenda indicators and more, and jump straight to the record with the problem.
+- **Read BAI2** bank balance and transaction reports (read-only), with type
+  codes explained and account, group and file control totals checked.
 
 Built with JavaFX on top of the [jACH](https://github.com/afrunt/jach) library.
 
@@ -68,8 +70,18 @@ Files passed on the command line open in their own tabs. When run from the jar,
 JavaFX logs an "Unsupported JavaFX configuration" warning at startup; it is
 harmless.
 
-Example files to try are in [`samples/`](samples): `payroll.ach`, `vendor.ach`,
-`consumer_debit.ach`, `returns.ach` and `iat.ach`.
+Example files to try are in [`samples/`](samples).
+
+ACH: `payroll.ach`, `vendor.ach`, `consumer_debit.ach`, `returns.ach` and `iat.ach`.
+
+BAI2 (with mixed extensions, since the type is detected from the content):
+
+| File | What it shows |
+|------|---------------|
+| `bai2_prior_day.txt` | Previous-day report: opening/closing balances, ACH, wires, checks, `S`/`V`/`D` funds availability, `88` continuations |
+| `bai2_intraday.bai` | Same-day interim report (current ledger/available, ZBA transfers, fees); CR/LF line endings, lines padded to 80 characters |
+| `bai2_multi_bank.dat` | Two banks in two groups, with USD, EUR and JPY accounts; text containing commas; an account currency taken from its group |
+| `bai2_with_errors.txt` | Deliberately broken: invalid date, bad funds type, balance code on a transaction, amount that isn't a number, wrong control total, missing account trailer, wrong record count |
 
 ## Using ACH Studio
 
@@ -87,7 +99,8 @@ Example files to try are in [`samples/`](samples): `payroll.ach`, `vendor.ach`,
 
 - **File ▸ Open…** (or drag files onto the window). You can select several
   files; each opens in a new tab. Opening a file that is already open switches
-  to its tab.
+  to its tab. Whether a file is ACH or BAI2 is worked out from its contents,
+  so any extension works (`.ach`, `.txt`, `.bai`, `.dat` or none).
 - **File ▸ New from template**: Payroll (PPD), Vendor payments (CCD with
   remittance), Customer collections (WEB), International payment (IAT) or an
   empty file. A form asks for the sending and receiving bank details and
@@ -101,6 +114,33 @@ Example files to try are in [`samples/`](samples): `payroll.ach`, `vendor.ach`,
 Files with stripped trailing spaces, Windows line endings, no line breaks or
 9-filled padding lines are read without complaint. Saved files are padded with
 filler lines to a multiple of ten records, as banks expect.
+
+### BAI2 files
+
+BAI2 files (BAI Cash Management Balance Reporting, version 2) are the
+balance and transaction reports banks send. They open in a read-only tab:
+
+- **Summary cards** at the top: sender, receiver, creation date, number of
+  groups, accounts and transactions, and total credits and debits.
+- **Raw view**: each line with its fields shaded. Hover a field for its name,
+  value and meaning. Selecting a line selects the whole record, including its
+  `88` continuation lines.
+- **Present mode**: a File → Group → Account table listing each account's
+  balances and summaries, then its transactions (credits in green, debits in
+  red), with type-code descriptions, funds availability, references and text.
+- **Right-hand panel**: every field of the selected record explained, such as
+  type codes (`142` → ACH Credit Received), funds types (`S`, `V`, `D`
+  availability), as-of modifiers and dates.
+- **Validation**: account (`49`), group (`98`) and file (`99`) control totals
+  and record counts, record order, missing trailers, dates, times, type codes
+  and amounts. Click a problem to jump to it.
+- **Report** exports a printable HTML summary.
+
+Amounts are in the currency's minor units (cents for USD, whole yen for JPY).
+An account without its own currency uses its group's, and a group without one
+is treated as USD. Text in `16` records may contain commas and slashes and may
+continue onto `88` lines. CR/LF, padded lines, blank lines and files without
+line breaks are all accepted.
 
 ### Editing records
 
@@ -176,11 +216,13 @@ On macOS, use Cmd instead of Ctrl.
 src/main/java/com/fx/ach/core/   ACH logic, no UI: reading/writing (via jACH), field
                                  meanings, control totals, validation, templates,
                                  insert positions, HTML report
+src/main/java/com/fx/ach/bai2/   BAI2 logic, no UI: parser, type codes, field
+                                 meanings, validation, HTML report
 src/main/java/com/fx/ach/        JavaFX UI: main window, record panel, present mode,
-                                 dialogs
+                                 BAI2 tab, dialogs
 src/main/resources/com/fx/ach/   FXML layout and stylesheet
 src/test/java/                   Unit tests for the core logic
-samples/                         Example ACH files
+samples/                         Example ACH and BAI2 files
 build.sh, build.ps1              Build scripts (jar, app image, installers)
 ```
 
@@ -191,6 +233,8 @@ build.sh, build.ps1              Build scripts (jar, app image, installers)
 - The default effective date is the next weekday; bank holidays are not
   considered.
 - Each tab holds a single ACH file (one file header and one file control).
+- BAI2 files are read-only, and only BAI version 2 is supported. Type codes
+  900–999 are bank-specific and shown without a description.
 
 ## License
 

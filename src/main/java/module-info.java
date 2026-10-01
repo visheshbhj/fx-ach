@@ -7,4 +7,5 @@ module com.fx.ach {
     opens com.fx.ach to javafx.fxml;
     exports com.fx.ach;
     exports com.fx.ach.core;
+    exports com.fx.ach.bai2;
 }

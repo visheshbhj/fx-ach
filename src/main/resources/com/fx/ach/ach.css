@@ -98,6 +98,21 @@
 .preview { -fx-font-weight: bold; -fx-text-fill: -accent; }
 .raw-section .text-area { -fx-font-size: 12px; }
 
+/* BAI2 tabs */
+.bai2-card-value { -fx-font-size: 15px; }
+.seg.bai2-code { -fx-background-color: #eef1f5; -fx-font-weight: bold; -fx-text-fill: #34404f; }
+.seg.bai2-code-01, .seg.bai2-code-99 { -fx-text-fill: #6b3fa0; }
+.seg.bai2-code-02, .seg.bai2-code-98, .seg.bai2-code-03, .seg.bai2-code-49 { -fx-text-fill: #2457c5; }
+.seg.bai2-code-88 { -fx-text-fill: -muted; -fx-font-weight: normal; }
+.raw-list .list-cell:filled:selected .seg.bai2-code { -fx-text-fill: #1d2433; }
+.bai2-tree .tree-table-row-cell.row-file .tree-table-cell { -fx-text-fill: #6b3fa0; -fx-font-weight: bold; }
+.bai2-tree .tree-table-row-cell.row-group .tree-table-cell,
+.bai2-tree .tree-table-row-cell.row-account .tree-table-cell { -fx-text-fill: #2457c5; -fx-font-weight: bold; }
+.bai2-tree .tree-table-row-cell.row-trailer .tree-table-cell { -fx-text-fill: -muted; }
+.bai2-tree .tree-table-row-cell.row-credit .tree-table-cell { -fx-text-fill: -credit; }
+.bai2-tree .tree-table-row-cell.row-debit .tree-table-cell { -fx-text-fill: -debit; }
+.bai2-tree .tree-table-row-cell:selected .tree-table-cell { -fx-text-fill: white; }
+
 /* document tabs */
 .empty-placeholder { -fx-text-fill: -muted; -fx-font-size: 15px; -fx-padding: 40; -fx-text-alignment: center; }
 

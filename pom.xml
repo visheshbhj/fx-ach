@@ -8,7 +8,7 @@
     <artifactId>ach</artifactId>
     <version>1.0-SNAPSHOT</version>
     <name>ach</name>
-    <description>ACH Studio – read, build and present NACHA ACH files</description>
+    <description>ACH Studio – read, build and present NACHA ACH files, and read BAI2 balance reports</description>
 
     <licenses>
         <license>

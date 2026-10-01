@@ -24,11 +24,16 @@ import com.fx.ach.core.AchSummary;
 import com.fx.ach.core.AchTemplates;
 import com.fx.ach.core.AchValidator;
 import com.fx.ach.core.FieldView;
+import com.fx.ach.bai2.Bai2Issue;
+import com.fx.ach.bai2.Bai2Parser;
 import javafx.application.Platform;
+import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.SimpleBooleanProperty;
 import javafx.fxml.FXML;
 import javafx.geometry.Pos;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonBar;
+import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
@@ -79,15 +84,25 @@ public class MainController {
     @FXML private SplitPane mainSplit;
     @FXML private TabPane tabs;
     @FXML private Label emptyPlaceholder;
-    @FXML private ListView<AchValidator.Issue> issuesList;
+    @FXML private ListView<Problem> issuesList;
     @FXML private Label issuesTitle;
     @FXML private Label statusLabel;
+    // ACH editing controls, disabled while a (read-only) BAI2 tab is active
+    @FXML private MenuItem saveItem, saveAsItem, saveTemplateItem, undoItem, addBatchItem, addEntryItem, addAddendaItem,
+            deleteItem, recalculateItem, renumberItem;
+    @FXML private Button saveButton, addBatchButton, addEntryButton, deleteButton, fixTotalsButton;
 
     private final AchService service = new AchService();
     private RecordPanel recordPanel;
     private Stage stage;
     private boolean syncing;
     private boolean switchingTabs;
+    private final BooleanProperty bai2Active = new SimpleBooleanProperty();
+    private double recordPanelDivider = 0.66;
+
+    /** One line in the validation list, for an ACH or a BAI2 tab. {@code jump} may be null. */
+    private record Problem(boolean error, String text, Runnable jump) {
+    }
 
     /**
      * One open file: its document state plus its own raw and present-mode views. The fields below
@@ -155,6 +170,8 @@ public class MainController {
     private VBox rawPane;
     private FormView formView;
     private boolean formViewStale = true;
+    /** The active tab when it shows a BAI2 file; ACH state above is then empty. */
+    private Bai2View bai2;
 
     void init(Stage stage) {
         this.stage = stage;
@@ -172,16 +189,19 @@ public class MainController {
             if (switchingTabs) {
                 return;
             }
-            Session from = oldTab == null ? null : (Session) oldTab.getUserData();
-            if (from != null && !from.closed && from == current && !resolvePendingEdits()) {
+            if (oldTab != null && oldTab.getUserData() instanceof Session from
+                    && !from.closed && from == current && !resolvePendingEdits()) {
                 switchingTabs = true;
                 tabs.getSelectionModel().select(oldTab); // stay on the tab with unapplied edits
                 switchingTabs = false;
                 return;
             }
-            activate(newTab == null ? null : (Session) newTab.getUserData());
+            activate(newTab == null ? null : newTab.getUserData());
         });
         presentToggle.selectedProperty().addListener((o, was, present) -> {
+            if (bai2 != null) {
+                bai2.setPresent(present);
+            }
             if (current == null) {
                 return;
             }
@@ -195,25 +215,32 @@ public class MainController {
             status(on ? "Edit mode on: field changes are applied automatically when you move to another record."
                     : "Edit mode off: you'll be asked before unapplied changes are lost.");
         });
-
+        for (MenuItem item : List.of(saveItem, saveAsItem, saveTemplateItem, undoItem, addBatchItem, addEntryItem,
+                addAddendaItem, deleteItem, recalculateItem, renumberItem)) {
+            item.disableProperty().bind(bai2Active);
+        }
+        for (javafx.scene.control.Control control : List.of(saveButton, addBatchButton, addEntryButton, deleteButton,
+                fixTotalsButton, editModeToggle)) {
+            control.disableProperty().bind(bai2Active);
+        }
 
         issuesList.setCellFactory(l -> new ListCell<>() {
             @Override
-            protected void updateItem(AchValidator.Issue issue, boolean empty) {
-                super.updateItem(issue, empty);
+            protected void updateItem(Problem problem, boolean empty) {
+                super.updateItem(problem, empty);
                 getStyleClass().removeAll("issue-error", "issue-warning");
-                if (empty || issue == null) {
+                if (empty || problem == null) {
                     setText(null);
                 } else {
-                    setText((issue.severity() == AchValidator.Severity.ERROR ? "✖  " : "⚠  ") + issue);
-                    getStyleClass().add(issue.severity() == AchValidator.Severity.ERROR ? "issue-error" : "issue-warning");
+                    setText((problem.error() ? "✖  " : "⚠  ") + problem.text());
+                    getStyleClass().add(problem.error() ? "issue-error" : "issue-warning");
                 }
             }
         });
         issuesList.setOnMouseClicked(e -> {
-            AchValidator.Issue issue = issuesList.getSelectionModel().getSelectedItem();
-            if (issue != null && issue.record() != null) {
-                requestSelect(issue.record(), true);
+            Problem problem = issuesList.getSelectionModel().getSelectedItem();
+            if (problem != null && problem.jump() != null) {
+                problem.jump().run();
             }
         });
 
@@ -270,6 +297,20 @@ public class MainController {
         status(notes.isEmpty() ? status : status + "  Note: " + String.join(" ", notes));
     }
 
+    /** Opens a BAI2 file in a new read-only tab and makes it active. */
+    private void openBai2(String text, Path path, String status) {
+        Bai2View view = new Bai2View(Bai2Parser.parse(text), path);
+        tabs.getTabs().add(view.tab);
+        tabs.getSelectionModel().select(view.tab);
+        if (bai2 != view) {
+            // the user kept unapplied edits on the previous tab
+            tabs.getTabs().remove(view.tab);
+            return;
+        }
+        long errors = view.issues().stream().filter(i -> i.severity() == Bai2Issue.Severity.ERROR).count();
+        status(status + " BAI2 files are read-only." + (errors > 0 ? "  " + errors + " validation error(s), listed below." : ""));
+    }
+
     /** Saves the active state back into its session. */
     private void stash() {
         if (current != null) {
@@ -282,9 +323,17 @@ public class MainController {
         }
     }
 
-    private void activate(Session s) {
+    /** Switches to a tab's content: an ACH {@link Session}, a {@link Bai2View}, or null for no tab. */
+    private void activate(Object tabContent) {
         stash();
+        Session s = tabContent instanceof Session session ? session : null;
         current = s;
+        bai2 = tabContent instanceof Bai2View view ? view : null;
+        bai2Active.set(bai2 != null);
+        showRecordPanel(bai2 == null);
+        if (bai2 != null) {
+            bai2.setPresent(presentToggle.isSelected());
+        }
         recordPanel.show(null, "");
         if (s == null) {
             doc = null;
@@ -305,6 +354,20 @@ public class MainController {
             applyPresentMode();
         }
         refresh();
+    }
+
+    /** The ACH record panel; BAI2 tabs bring their own read-only field panel. */
+    private void showRecordPanel(boolean show) {
+        if (show == mainSplit.getItems().contains(recordPanel)) {
+            return;
+        }
+        if (show) {
+            mainSplit.getItems().add(recordPanel);
+            mainSplit.setDividerPositions(recordPanelDivider);
+        } else {
+            recordPanelDivider = mainSplit.getDividerPositions()[0];
+            mainSplit.getItems().remove(recordPanel);
+        }
     }
 
     private void applyPresentMode() {
@@ -335,8 +398,7 @@ public class MainController {
 
     private boolean closeAll() {
         for (Tab t : new ArrayList<>(tabs.getTabs())) {
-            Session s = (Session) t.getUserData();
-            if (!close(s)) {
+            if (t.getUserData() instanceof Session s && !close(s)) {
                 return false;
             }
             tabs.getTabs().remove(t);
@@ -348,15 +410,17 @@ public class MainController {
     private void onCloseTab() {
         if (current != null && close(current)) {
             tabs.getTabs().remove(current.tab);
+        } else if (bai2 != null) {
+            tabs.getTabs().remove(bai2.tab);
         }
     }
 
-    private Session sessionFor(Path path) {
+    private Tab tabFor(Path path) {
         for (Tab t : tabs.getTabs()) {
-            Session s = (Session) t.getUserData();
-            Path p = s == current ? file : s.file;
+            Path p = t.getUserData() instanceof Session s ? (s == current ? file : s.file)
+                    : t.getUserData() instanceof Bai2View v ? v.path() : null;
             if (p != null && p.toAbsolutePath().normalize().equals(path.toAbsolutePath().normalize())) {
-                return s;
+                return t;
             }
         }
         return null;
@@ -671,6 +735,10 @@ public class MainController {
     @FXML
     private void onNewFromPaste() {
         Dialogs.pastedFile(stage).ifPresent(text -> {
+            if (Bai2Parser.looksLikeBai2(text)) {
+                openBai2(text, null, "BAI2 file from pasted text.");
+                return;
+            }
             try {
                 AchService.ReadResult result = service.read(text);
                 openInNewTab(result.document(), null, result.notes(), "New file from pasted text.");
@@ -682,18 +750,33 @@ public class MainController {
 
     @FXML
     private void onOpen() {
-        List<File> files = chooser("Open ACH file(s)").showOpenMultipleDialog(stage);
+        List<File> files = chooser("Open ACH or BAI2 file(s)").showOpenMultipleDialog(stage);
         if (files != null) {
             files.forEach(f -> open(f.toPath()));
         }
     }
 
-    /** Opens a file in its own tab, or switches to it if it is already open. */
+    /**
+     * Opens a file in its own tab, or switches to it if it is already open. ACH or BAI2 is decided
+     * from the content, never the extension: a BAI2 file starts with "01,".
+     */
     void open(Path path) {
-        Session existing = sessionFor(path);
+        Tab existing = tabFor(path);
         if (existing != null) {
-            tabs.getSelectionModel().select(existing.tab);
+            tabs.getSelectionModel().select(existing);
             status(path.getFileName() + " is already open.");
+            return;
+        }
+        String text;
+        try {
+            text = Files.readString(path, StandardCharsets.ISO_8859_1);
+        } catch (IOException e) {
+            error("Could not read " + path.getFileName(), e);
+            return;
+        }
+        if (Bai2Parser.looksLikeBai2(text)) {
+            openBai2(text, path, "Opened BAI2 file " + path.getFileName() + ".");
+            Prefs.setLastDir(path.getParent());
             return;
         }
         try {
@@ -701,7 +784,10 @@ public class MainController {
             openInNewTab(result.document(), path, result.notes(), "Opened " + path.getFileName() + ".");
             Prefs.setLastDir(path.getParent());
         } catch (IOException | AchException e) {
-            error("Could not read " + path.getFileName(), e);
+            boolean achLike = text.lines().filter(l -> !l.isBlank()).findFirst().map(l -> l.strip().startsWith("1")).orElse(false);
+            error("Could not read " + path.getFileName(), achLike ? e : new AchException(
+                    "This doesn't look like an ACH file (which starts with a \"1\" file header record) "
+                            + "or a BAI2 file (which starts with \"01,\").\n\n" + e.getMessage()));
         }
     }
 
@@ -782,20 +868,29 @@ public class MainController {
 
     @FXML
     private void onExportReport() {
-        if (doc == null || !resolvePendingEdits()) {
+        Path source;
+        Supplier<String> html;
+        if (bai2 != null) {
+            source = bai2.path();
+            html = bai2::report;
+        } else if (doc != null && resolvePendingEdits()) {
+            source = file;
+            html = () -> AchReport.html(service, doc, file == null ? "(unsaved)" : file.getFileName().toString());
+        } else {
             return;
         }
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Export readable report");
         chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("HTML page", "*.html"));
-        chooser.setInitialFileName((file == null ? "ach-report" : file.getFileName().toString().replaceFirst("\\.[^.]*$", "")) + ".html");
+        String fallback = bai2 != null ? "bai2-report" : "ach-report";
+        chooser.setInitialFileName((source == null ? fallback : source.getFileName().toString().replaceFirst("\\.[^.]*$", "")) + ".html");
         Prefs.lastDir().ifPresent(d -> chooser.setInitialDirectory(d.toFile()));
         File f = chooser.showSaveDialog(stage);
         if (f == null) {
             return;
         }
         try {
-            Files.writeString(f.toPath(), AchReport.html(service, doc, file == null ? "(unsaved)" : file.getFileName().toString()));
+            Files.writeString(f.toPath(), html.get());
             status("Report written to " + f + ". Open it in a browser to read or print.");
         } catch (IOException e) {
             error("Could not write report", e);
@@ -957,18 +1052,25 @@ public class MainController {
         stash();
         updateTitle();
         if (doc == null) {
-            issuesList.getItems().clear();
-            issuesTitle.setText("VALIDATION");
-            statusBadge.setText("");
-            statusBadge.getStyleClass().removeAll("badge-ok", "badge-error", "badge-warn");
             recordPanel.show(null, "");
+            if (bai2 != null) {
+                Bai2View view = bai2;
+                showProblems(view.issues().stream().map(i -> new Problem(i.severity() == Bai2Issue.Severity.ERROR, i.toString(),
+                        i.record() == null ? null : () -> view.select(i.record()))).toList());
+            } else {
+                issuesList.getItems().clear();
+                issuesTitle.setText("VALIDATION");
+                statusBadge.setText("");
+                statusBadge.getStyleClass().removeAll("badge-ok", "badge-error", "badge-warn");
+            }
             return;
         }
         List<AchValidator.Issue> issues = AchValidator.validate(doc);
         syncing = true;
         try {
             rawList.getItems().setAll(AchService.records(doc));
-            issuesList.getItems().setAll(issues);
+            showProblems(issues.stream().map(i -> new Problem(i.severity() == AchValidator.Severity.ERROR, i.toString(),
+                    i.record() == null ? null : () -> requestSelect(i.record(), true))).toList());
         } finally {
             syncing = false;
         }
@@ -976,10 +1078,20 @@ public class MainController {
             formView.show(doc);
             formViewStale = false;
         }
-        long errors = issues.stream().filter(i -> i.severity() == AchValidator.Severity.ERROR).count();
-        long warnings = issues.size() - errors;
+
+        if (selected == null || !AchService.records(doc).contains(selected)) {
+            selected = doc.getFileHeader();
+        }
+        showRecord(selected, true);
+    }
+
+    /** Fills the validation list and the toolbar status badge. */
+    private void showProblems(List<Problem> problems) {
+        issuesList.getItems().setAll(problems);
+        long errors = problems.stream().filter(Problem::error).count();
+        long warnings = problems.size() - errors;
         statusBadge.getStyleClass().removeAll("badge-ok", "badge-error", "badge-warn");
-        if (issues.isEmpty()) {
+        if (problems.isEmpty()) {
             statusBadge.setText("✔ Valid file");
             statusBadge.getStyleClass().add("badge-ok");
         } else if (errors > 0) {
@@ -989,12 +1101,7 @@ public class MainController {
             statusBadge.setText("⚠ " + warnings + " warning(s)");
             statusBadge.getStyleClass().add("badge-warn");
         }
-        issuesTitle.setText(issues.isEmpty() ? "VALIDATION · no problems found" : "VALIDATION · " + issues.size() + " issue(s) – click to jump to the record");
-
-        if (selected == null || !AchService.records(doc).contains(selected)) {
-            selected = doc.getFileHeader();
-        }
-        showRecord(selected, true);
+        issuesTitle.setText(problems.isEmpty() ? "VALIDATION · no problems found" : "VALIDATION · " + problems.size() + " issue(s) – click to jump to the record");
     }
 
     private String describe(ACHRecord record) {
@@ -1049,10 +1156,11 @@ public class MainController {
         FileChooser chooser = new FileChooser();
         chooser.setTitle(title);
         chooser.getExtensionFilters().addAll(
-                // ACH files often have no or arbitrary extensions, so default to showing everything.
+                // ACH and BAI2 files often have no or arbitrary extensions, so default to showing everything.
                 // "*" rather than "*.*": the latter hides extensionless files on Linux/macOS.
                 new FileChooser.ExtensionFilter("All files", "*"),
-                new FileChooser.ExtensionFilter("ACH / NACHA files", "*.ach", "*.txt", "*.nacha", "*.dat"));
+                new FileChooser.ExtensionFilter("ACH / NACHA files", "*.ach", "*.txt", "*.nacha", "*.dat"),
+                new FileChooser.ExtensionFilter("BAI2 files", "*.bai", "*.bai2", "*.txt", "*.dat", "*.csv"));
         Prefs.lastDir().ifPresent(d -> chooser.setInitialDirectory(d.toFile()));
         return chooser;
     }
@@ -1073,7 +1181,8 @@ public class MainController {
     }
 
     private void updateTitle() {
-        String name = doc == null ? "" : " — " + (file == null ? "Untitled" : file.getFileName()) + (dirty ? " *" : "");
+        String name = bai2 != null ? " — " + bai2.title() + " (BAI2, read-only)"
+                : doc == null ? "" : " — " + (file == null ? "Untitled" : file.getFileName()) + (dirty ? " *" : "");
         stage.setTitle("ACH Studio" + name);
         if (current != null) {
             current.updateTab();

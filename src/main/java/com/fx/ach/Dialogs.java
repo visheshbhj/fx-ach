@@ -215,7 +215,7 @@ final class Dialogs {
     // ---- whole file from pasted text ---------------------------------------------------------
 
     static Optional<String> pastedFile(Window owner) {
-        Form form = new Form("New from pasted text", "Paste the full contents of an ACH file (header 1 through file control 9).");
+        Form form = new Form("New from pasted text", "Paste the full contents of an ACH file (header 1 through file control 9) or a BAI2 file (01 through 99).");
         TextArea area = new TextArea();
         area.getStyleClass().add("mono");
         area.setPrefRowCount(16);

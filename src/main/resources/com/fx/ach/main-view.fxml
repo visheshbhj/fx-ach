@@ -16,13 +16,13 @@
                         <accelerator><KeyCodeCombination code="O" control="UP" shift="UP" alt="UP" meta="UP" shortcut="DOWN"/></accelerator>
                     </MenuItem>
                     <SeparatorMenuItem/>
-                    <MenuItem text="_Save" onAction="#onSave">
+                    <MenuItem fx:id="saveItem" text="_Save" onAction="#onSave">
                         <accelerator><KeyCodeCombination code="S" control="UP" shift="UP" alt="UP" meta="UP" shortcut="DOWN"/></accelerator>
                     </MenuItem>
-                    <MenuItem text="Save _As…" onAction="#onSaveAs">
+                    <MenuItem fx:id="saveAsItem" text="Save _As…" onAction="#onSaveAs">
                         <accelerator><KeyCodeCombination code="S" control="UP" shift="DOWN" alt="UP" meta="UP" shortcut="DOWN"/></accelerator>
                     </MenuItem>
-                    <MenuItem text="Save as _Template…" onAction="#onSaveTemplate"/>
+                    <MenuItem fx:id="saveTemplateItem" text="Save as _Template…" onAction="#onSaveTemplate"/>
                     <MenuItem text="_Close Tab" onAction="#onCloseTab">
                         <accelerator><KeyCodeCombination code="W" control="UP" shift="UP" alt="UP" meta="UP" shortcut="DOWN"/></accelerator>
                     </MenuItem>
@@ -31,39 +31,39 @@
                     <MenuItem text="E_xit" onAction="#onExit"/>
                 </Menu>
                 <Menu text="_Edit">
-                    <MenuItem text="_Undo" onAction="#onUndo">
+                    <MenuItem fx:id="undoItem" text="_Undo" onAction="#onUndo">
                         <accelerator><KeyCodeCombination code="Z" control="UP" shift="UP" alt="UP" meta="UP" shortcut="DOWN"/></accelerator>
                     </MenuItem>
                     <SeparatorMenuItem/>
-                    <MenuItem text="Add _Batch…" onAction="#onAddBatch"/>
-                    <MenuItem text="Add _Entry…" onAction="#onAddEntry">
+                    <MenuItem fx:id="addBatchItem" text="Add _Batch…" onAction="#onAddBatch"/>
+                    <MenuItem fx:id="addEntryItem" text="Add _Entry…" onAction="#onAddEntry">
                         <accelerator><KeyCodeCombination code="E" control="UP" shift="UP" alt="UP" meta="UP" shortcut="DOWN"/></accelerator>
                     </MenuItem>
-                    <MenuItem text="Add A_ddenda…" onAction="#onAddAddenda"/>
-                    <MenuItem text="_Delete Selected" onAction="#onDelete"/>
+                    <MenuItem fx:id="addAddendaItem" text="Add A_ddenda…" onAction="#onAddAddenda"/>
+                    <MenuItem fx:id="deleteItem" text="_Delete Selected" onAction="#onDelete"/>
                     <SeparatorMenuItem/>
-                    <MenuItem text="_Recalculate Totals &amp; Controls" onAction="#onRecalculate">
+                    <MenuItem fx:id="recalculateItem" text="_Recalculate Totals &amp; Controls" onAction="#onRecalculate">
                         <accelerator><KeyCodeCombination code="R" control="UP" shift="UP" alt="UP" meta="UP" shortcut="DOWN"/></accelerator>
                     </MenuItem>
-                    <MenuItem text="Renumber _Trace Numbers" onAction="#onRenumber"/>
+                    <MenuItem fx:id="renumberItem" text="Renumber _Trace Numbers" onAction="#onRenumber"/>
                 </Menu>
             </MenuBar>
             <ToolBar>
                 <MenuButton fx:id="newButton" text="New"/>
                 <Button text="Open" onAction="#onOpen"/>
-                <Button text="Save" onAction="#onSave"/>
+                <Button fx:id="saveButton" text="Save" onAction="#onSave"/>
                 <Separator/>
-                <Button text="+ Batch" onAction="#onAddBatch"/>
-                <Button text="+ Entry" onAction="#onAddEntry"/>
-                <Button text="Delete" onAction="#onDelete"/>
+                <Button fx:id="addBatchButton" text="+ Batch" onAction="#onAddBatch"/>
+                <Button fx:id="addEntryButton" text="+ Entry" onAction="#onAddEntry"/>
+                <Button fx:id="deleteButton" text="Delete" onAction="#onDelete"/>
                 <Separator/>
-                <Button text="Fix Totals" onAction="#onRecalculate">
+                <Button fx:id="fixTotalsButton" text="Fix Totals" onAction="#onRecalculate">
                     <tooltip><Tooltip text="Recompute batch and file control records (counts, hashes, totals)"/></tooltip>
                 </Button>
                 <Button text="Report" onAction="#onExportReport"/>
                 <Separator/>
                 <ToggleButton fx:id="presentToggle" text="Present mode">
-                    <tooltip><Tooltip text="Show the file as collapsible forms instead of raw 94-character lines"/></tooltip>
+                    <tooltip><Tooltip text="Show the file as collapsible forms (ACH) or a grouped table (BAI2) instead of raw lines"/></tooltip>
                 </ToggleButton>
                 <ToggleButton fx:id="editModeToggle" text="Edit mode">
                     <tooltip><Tooltip text="Apply field changes automatically when moving to another record, without asking"/></tooltip>
@@ -78,7 +78,7 @@
             <SplitPane orientation="VERTICAL" dividerPositions="0.8">
                 <StackPane>
                     <Label fx:id="emptyPlaceholder" styleClass="empty-placeholder" wrapText="true"
-                           text="No file open.&#10;&#10;File ▸ Open… (or drag ACH files onto this window) – each file opens in its own tab.&#10;File ▸ New from template / New from Pasted Text to build one."/>
+                           text="No file open.&#10;&#10;File ▸ Open… (or drag ACH or BAI2 files onto this window) – each file opens in its own tab.&#10;The file type is detected from the content, so any extension (.ach, .txt, .bai…) works.&#10;File ▸ New from template / New from Pasted Text to build one."/>
                     <TabPane fx:id="tabs" tabClosingPolicy="ALL_TABS"/>
                 </StackPane>
                 <VBox>
@@ -91,7 +91,7 @@
     <bottom>
         <HBox styleClass="status-bar">
             <padding><Insets top="3" right="10" bottom="3" left="10"/></padding>
-            <Label fx:id="statusLabel" text="Open an ACH file or start a new one from a template. Right-click a record to insert before/after it."/>
+            <Label fx:id="statusLabel" text="Open an ACH or BAI2 file, or start a new ACH file from a template. Right-click a record to insert before/after it."/>
         </HBox>
     </bottom>
 </BorderPane>
