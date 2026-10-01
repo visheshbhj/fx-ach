@@ -19,7 +19,7 @@ for arg in "$@"; do
     case "$arg" in
         jar|app|installer) TARGET="$arg" ;;
         --skip-tests) MVN_ARGS+=(-DskipTests) ;;
-        -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "Unknown argument: $arg (try --help)" >&2; exit 1 ;;
     esac
 done
