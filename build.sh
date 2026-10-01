@@ -49,11 +49,13 @@ if ! command -v jpackage >/dev/null 2>&1; then
     exit 1
 fi
 
-# jpackage bundles everything in --input; give it just the fat jar.
+# jpackage bundles everything in --input: the fat jar plus license files.
 INPUT="target/jpackage-input"
 rm -rf "$INPUT"
 mkdir -p "$INPUT" dist
 cp "$JAR" "$INPUT/"
+# license and notices travel with the app (they end up next to the jar in the app image)
+cp -r LICENSE NOTICE THIRD-PARTY-NOTICES.md licenses "$INPUT/"
 
 # Java modules JavaFX and the app need when run from the classpath.
 MODULES="java.base,java.desktop,java.logging,java.prefs,java.scripting,java.xml,jdk.unsupported,jdk.charsets"
@@ -95,6 +97,6 @@ case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*) TYPE=msi; EXTRA=(--win-menu --win-shortcut --win-dir-chooser) ;;  # needs WiX Toolset
     *) echo "Unsupported OS for installers: $(uname -s)" >&2; exit 1 ;;
 esac
-jpackage --type "$TYPE" "${COMMON[@]}" "${EXTRA[@]}"
+jpackage --type "$TYPE" "${COMMON[@]}" "${EXTRA[@]}" --license-file LICENSE
 echo
 echo "Done: $(ls -t dist/*."$TYPE" | head -1)"

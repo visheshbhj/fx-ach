@@ -1,0 +1,8 @@
+ACH Studio
+Copyright 2026 Vishesh Bhardwaj
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Binary distributions of this product (the runnable jar, app image and
+installers produced by build.sh) bundle third-party software under their own
+licenses. See THIRD-PARTY-NOTICES.md and the licenses/ directory.
