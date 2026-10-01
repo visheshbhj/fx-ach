@@ -34,8 +34,21 @@ Maven is not required; the Maven wrapper (`./mvnw`) downloads it.
 ./build.sh --help
 ```
 
+On Windows, use `build.ps1` in PowerShell instead:
+
+```powershell
+.\build.ps1                # runnable jar        -> target\ach-studio.jar
+.\build.ps1 app            # self-contained app  -> dist\ach-studio\ach-studio.exe
+.\build.ps1 installer      # .msi installer      -> dist\ (needs the WiX Toolset)
+.\build.ps1 -SkipTests     # combine with any of the above
+.\build.ps1 -Help
+```
+
+If PowerShell refuses to run scripts, use
+`powershell -ExecutionPolicy Bypass -File .\build.ps1 [args]`.
+
 The jar includes JavaFX for the operating system it was built on, so build on
-each OS you want to ship for. On Windows, run `build.sh` from Git Bash.
+each OS you want to ship for.
 
 Other useful commands:
 
@@ -168,7 +181,7 @@ src/main/java/com/fx/ach/        JavaFX UI: main window, record panel, present m
 src/main/resources/com/fx/ach/   FXML layout and stylesheet
 src/test/java/                   Unit tests for the core logic
 samples/                         Example ACH files
-build.sh                         Build script (jar, app image, installers)
+build.sh, build.ps1              Build scripts (jar, app image, installers)
 ```
 
 ## Limitations
