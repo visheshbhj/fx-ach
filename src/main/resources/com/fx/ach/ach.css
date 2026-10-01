@@ -100,3 +100,6 @@
 
 /* document tabs */
 .empty-placeholder { -fx-text-fill: -muted; -fx-font-size: 15px; -fx-padding: 40; -fx-text-alignment: center; }
+
+/* Highlight the window while files are dragged over it. */
+.drop-target { -fx-border-color: -accent; -fx-border-width: 3; -fx-border-style: dashed; }

@@ -44,6 +44,7 @@ import javafx.scene.control.TabPane;
 import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.ToggleButton;
 import javafx.scene.control.Tooltip;
+import javafx.scene.input.DragEvent;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.TransferMode;
 import javafx.scene.layout.BorderPane;
@@ -216,18 +217,29 @@ public class MainController {
             }
         });
 
-        root.setOnDragOver(e -> {
+        // Filters on the scene root run before child controls (text areas, tables) can claim the drag.
+        root.addEventFilter(DragEvent.DRAG_OVER, e -> {
             if (e.getDragboard().hasFiles()) {
                 e.acceptTransferModes(TransferMode.COPY);
+                e.consume();
             }
-            e.consume();
         });
-        root.setOnDragDropped(e -> {
-            for (File f : e.getDragboard().getFiles()) {
-                open(f.toPath());
+        root.addEventFilter(DragEvent.DRAG_ENTERED, e -> {
+            if (e.getDragboard().hasFiles() && !root.getStyleClass().contains("drop-target")) {
+                root.getStyleClass().add("drop-target");
             }
-            e.setDropCompleted(true);
+        });
+        root.addEventFilter(DragEvent.DRAG_EXITED, e -> root.getStyleClass().remove("drop-target"));
+        root.addEventFilter(DragEvent.DRAG_DROPPED, e -> {
+            if (!e.getDragboard().hasFiles()) {
+                return;
+            }
+            root.getStyleClass().remove("drop-target");
+            List<Path> paths = e.getDragboard().getFiles().stream().map(File::toPath).filter(Files::isRegularFile).toList();
+            e.setDropCompleted(!paths.isEmpty());
             e.consume();
+            // Open after the drop completes so error dialogs don't block the OS drag source.
+            Platform.runLater(() -> paths.forEach(this::open));
         });
         stage.setOnCloseRequest(e -> {
             if (!closeAll()) {
@@ -1037,8 +1049,10 @@ public class MainController {
         FileChooser chooser = new FileChooser();
         chooser.setTitle(title);
         chooser.getExtensionFilters().addAll(
-                new FileChooser.ExtensionFilter("ACH / NACHA files", "*.ach", "*.txt", "*.nacha", "*.dat"),
-                new FileChooser.ExtensionFilter("All files", "*.*"));
+                // ACH files often have no or arbitrary extensions, so default to showing everything.
+                // "*" rather than "*.*": the latter hides extensionless files on Linux/macOS.
+                new FileChooser.ExtensionFilter("All files", "*"),
+                new FileChooser.ExtensionFilter("ACH / NACHA files", "*.ach", "*.txt", "*.nacha", "*.dat"));
         Prefs.lastDir().ifPresent(d -> chooser.setInitialDirectory(d.toFile()));
         return chooser;
     }
