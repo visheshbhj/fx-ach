@@ -101,7 +101,7 @@ public class MainController {
         this.stage = stage;
         rebuildNewMenus();
 
-        recordPanel = new RecordPanel(service, this::applyEdits);
+        recordPanel = new RecordPanel(service, this::applyEdits, this::rawAction);
         recordPanel.setMinWidth(320);
         mainSplit.getItems().add(recordPanel);
         mainSplit.setDividerPositions(0.66);
@@ -302,9 +302,8 @@ public class MainController {
             for (Kind kind : Kind.values()) {
                 Optional<Slot> slot = AchInsert.slot(doc, record, kind, where);
                 MenuItem item = new MenuItem(insertLabel(record, kind, where));
-                String blocker = slot.isEmpty() ? "not allowed here" : insertBlocker(slot.get());
-                if (blocker != null) {
-                    item.setText(item.getText() + "  (" + blocker + ")");
+                if (slot.isEmpty()) {
+                    item.setText(item.getText() + "  (not allowed here)");
                     item.setDisable(true);
                 } else {
                     item.setOnAction(e -> insert(slot.get(), batchTemplate(record)));
@@ -329,21 +328,6 @@ public class MainController {
         };
     }
 
-    /** Why a slot can't be filled from a form, or null if it can. */
-    private String insertBlocker(Slot slot) {
-        if (slot.kind() == Kind.BATCH) {
-            return null;
-        }
-        String sec = AchFormat.trim(AchInsert.batchOf(doc, slot).getBatchHeader().getStandardEntryClassCode());
-        if (slot.kind() == Kind.ENTRY && !AchBuilder.BUILDABLE_SEC.contains(sec)) {
-            return "forms support PPD/CCD/WEB/TEL, this batch is " + sec;
-        }
-        if (slot.kind() == Kind.ADDENDA && "TEL".equals(sec)) {
-            return "TEL entries can't have addenda";
-        }
-        return null;
-    }
-
     private BatchHeader batchTemplate(ACHRecord anchor) {
         for (ACHBatch batch : doc.getBatches()) {
             if (AchService.records(batch).contains(anchor)) {
@@ -353,36 +337,86 @@ public class MainController {
         return doc.getBatches().isEmpty() ? null : doc.getBatches().get(doc.getBatches().size() - 1).getBatchHeader();
     }
 
-    /** Asks for the new record's details, then inserts it at the slot. */
+    /** Asks for the new record's details (form or pasted raw lines), then inserts it at the slot. */
     private void insert(Slot slot, BatchHeader templateHeader) {
         if (!resolvePendingEdits()) {
             return;
         }
         Supplier<ACHRecord> inserted = () -> AchInsert.recordAt(doc, slot);
         switch (slot.kind()) {
-            case BATCH -> Dialogs.batch(stage, templateHeader).ifPresent(batch -> commit("Inserted batch", () -> {
-                batch.setBatchControl(new BatchControl());
-                AchInsert.insert(doc, slot, batch);
-                AchControls.recalculate(doc);
-            }, inserted));
+            case BATCH -> Dialogs.batch(stage, templateHeader).ifPresent(r -> {
+                if (r.isRaw()) {
+                    insertRaw(slot, r.raw());
+                } else {
+                    commit("Inserted batch", () -> {
+                        r.built().setBatchControl(new BatchControl());
+                        AchInsert.insert(doc, slot, r.built());
+                        AchControls.recalculate(doc);
+                    }, inserted);
+                }
+            });
             case ENTRY -> {
                 String sec = AchFormat.trim(AchInsert.batchOf(doc, slot).getBatchHeader().getStandardEntryClassCode());
-                Dialogs.entry(stage, sec).ifPresent(detail -> commit("Inserted entry", () -> {
-                    AchInsert.insert(doc, slot, detail);
-                    AchBuilder.finish(doc);
-                }, inserted));
+                Dialogs.entry(stage, sec).ifPresent(r -> {
+                    if (r.isRaw()) {
+                        insertRaw(slot, r.raw());
+                    } else {
+                        commit("Inserted entry", () -> {
+                            AchInsert.insert(doc, slot, r.built());
+                            AchBuilder.finish(doc);
+                        }, inserted);
+                    }
+                });
             }
-            case ADDENDA -> {
-                TextInputDialog input = new TextInputDialog();
-                input.initOwner(stage);
-                input.setHeaderText("Payment-related information (addenda type 05), up to 80 characters.\nExample: INV 10045 PO 2231");
-                input.setContentText("Text:");
-                input.showAndWait().filter(s -> !s.isBlank()).ifPresent(text -> commit("Inserted addenda", () -> {
-                    AchInsert.insert(doc, slot, AchBuilder.newAddenda(text.trim()));
-                    AchBuilder.finish(doc);
-                }, inserted));
-            }
+            case ADDENDA -> Dialogs.addenda(stage).ifPresent(r -> {
+                if (r.isRaw()) {
+                    insertRaw(slot, r.raw());
+                } else {
+                    commit("Inserted addenda", () -> {
+                        AchInsert.insert(doc, slot, AchBuilder.newAddenda(r.built()));
+                        AchBuilder.finish(doc);
+                    }, inserted);
+                }
+            });
         }
+    }
+
+    private void insertRaw(Slot slot, String raw) {
+        int at = AchInsert.lineIndex(doc, slot);
+        splice("Inserted pasted line(s)", at, 0, raw);
+    }
+
+    /** Raw-line box in the record panel: replace the record, or insert pasted line(s) next to it. */
+    private void rawAction(RecordPanel.RawAction action, ACHRecord record, String text) {
+        int index = indexOf(record);
+        if (!resolvePendingEdits()) {
+            return;
+        }
+        switch (action) {
+            case REPLACE -> splice("Replaced record from raw line", index, 1, text);
+            case BEFORE -> splice("Inserted pasted line(s) before", index, 0, text);
+            case AFTER -> splice("Inserted pasted line(s) after", index + 1, 0, text);
+        }
+    }
+
+    /**
+     * Swaps raw lines into the file text and re-parses it. Totals are recalculated afterwards unless
+     * the pasted lines are themselves control records (8/9), which are kept exactly as pasted.
+     */
+    private void splice(String description, int at, int remove, String text) {
+        boolean controlsOnly;
+        try {
+            controlsOnly = AchService.pastedLines(text).stream().allMatch(l -> l.startsWith("8") || l.startsWith("9"));
+        } catch (AchException e) {
+            error("Can't use the pasted text", e);
+            return;
+        }
+        commit(description, () -> {
+            doc = service.splice(doc, at, remove, text);
+            if (!controlsOnly) {
+                AchControls.recalculate(doc);
+            }
+        }, () -> recordAt(at));
     }
 
     /** Inserts after the selection when possible, otherwise before it (toolbar and Edit menu). */
@@ -410,11 +444,6 @@ public class MainController {
                 case ADDENDA -> "Select an entry or addenda first.";
                 case BATCH -> "Select where the new batch should go.";
             });
-            return;
-        }
-        String blocker = insertBlocker(slot.get());
-        if (blocker != null) {
-            info("Can't add here: " + blocker + ".");
             return;
         }
         insert(slot.get(), batchTemplate(anchor));
@@ -464,6 +493,21 @@ public class MainController {
                 load(service.normalise(created), null, List.of(), "New file from template " + template.getFileName() + ".");
             } catch (IOException | AchException e) {
                 error("Could not use template", e);
+            }
+        });
+    }
+
+    @FXML
+    private void onNewFromPaste() {
+        if (!confirmDiscard()) {
+            return;
+        }
+        Dialogs.pastedFile(stage).ifPresent(text -> {
+            try {
+                AchService.ReadResult result = service.read(text);
+                load(result.document(), null, result.notes(), "New file from pasted text.");
+            } catch (AchException e) {
+                error("Could not read the pasted text", e);
             }
         });
     }
@@ -652,16 +696,18 @@ public class MainController {
             return;
         }
         boolean wholeBatch = selected instanceof BatchHeader || selected instanceof BatchControl;
-        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION, "Delete " + (wholeBatch ? "this whole batch" : what) + "?",
-                ButtonType.OK, ButtonType.CANCEL);
-        confirm.initOwner(stage);
-        confirm.setHeaderText(null);
-        if (confirm.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) {
-            return;
+        if (!editModeToggle.isSelected()) {
+            Alert confirm = new Alert(Alert.AlertType.CONFIRMATION, "Delete " + (wholeBatch ? "this whole batch" : what)
+                    + "?\n\nTip: in Edit mode deletes happen without asking (Ctrl+Z undoes).", ButtonType.OK, ButtonType.CANCEL);
+            confirm.initOwner(stage);
+            confirm.setHeaderText(null);
+            if (confirm.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) {
+                return;
+            }
         }
         ACHRecord target = selected;
         int index = indexOf(target);
-        commit("Deleted " + what, () -> {
+        commit("Deleted " + (wholeBatch ? "batch" : what) + " (Ctrl+Z to undo)", () -> {
             for (ACHBatch batch : new ArrayList<>(doc.getBatches())) {
                 if (batch.getBatchHeader() == target || batch.getBatchControl() == target) {
                     doc.getBatches().remove(batch);

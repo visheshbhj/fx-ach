@@ -11,6 +11,7 @@
             <MenuBar>
                 <Menu text="_File">
                     <Menu fx:id="newMenu" text="_New from template"/>
+                    <MenuItem text="New from _Pasted Text…" onAction="#onNewFromPaste"/>
                     <MenuItem text="_Open…" onAction="#onOpen">
                         <accelerator><KeyCodeCombination code="O" control="UP" shift="UP" alt="UP" meta="UP" shortcut="DOWN"/></accelerator>
                     </MenuItem>

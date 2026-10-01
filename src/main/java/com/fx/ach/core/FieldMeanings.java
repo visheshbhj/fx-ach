@@ -126,6 +126,61 @@ public final class FieldMeanings {
                 return "Receiver";
             case "Identification Number":
                 return "Originator's reference for the receiver";
+            case "Foreign Exchange Indicator":
+                return switch (v) {
+                    case "FV" -> "Fixed-to-variable: fixed USD amount, converted at the receiving end";
+                    case "VF" -> "Variable-to-fixed: fixed foreign amount";
+                    case "FF" -> "Fixed-to-fixed: no currency conversion";
+                    default -> v;
+                };
+            case "Foreign Exchange Reference Indicator":
+                return switch (v) {
+                    case "1" -> "Reference is an exchange rate";
+                    case "2" -> "Reference is a foreign exchange reference number";
+                    case "3" -> "No foreign exchange reference (blank)";
+                    default -> v;
+                };
+            case "ISO Destination Country Code":
+            case "RDFI Branch Country Code":
+            case "ODFI Branch Country Code":
+            case "Foreign Correspondent Bank Branch Country Code":
+                return v.isEmpty() ? "" : "Country " + v;
+            case "ISO Originating Country Code":
+            case "ISO Destination Currency Code":
+                return v.isEmpty() ? "" : "Currency " + v;
+            case "Originator ID":
+                return "Originator's company ID";
+            case "Number of Addenda Records":
+                return number(v) + " addenda record(s) follow (IAT needs at least 7)";
+            case "Transaction Type Code":
+                return switch (v) {
+                    case "ANN" -> "Annuity";
+                    case "BUS" -> "Business / commercial";
+                    case "DEP" -> "Deposit";
+                    case "LOA" -> "Loan";
+                    case "MIS" -> "Miscellaneous";
+                    case "MOR" -> "Mortgage";
+                    case "PEN" -> "Pension";
+                    case "REM" -> "Remittance";
+                    case "RLS" -> "Rent / lease";
+                    case "SAL" -> "Salary / payroll";
+                    case "TAX" -> "Tax";
+                    default -> v;
+                };
+            case "ODFI ID Number Qualifier":
+            case "RDFI ID Number Qualifier":
+            case "Foreign Correspondent Bank Identification Number Qualifier":
+                return switch (v) {
+                    case "01" -> "National clearing system number (e.g. routing number)";
+                    case "02" -> "BIC / SWIFT code";
+                    case "03" -> "IBAN";
+                    default -> v;
+                };
+            case "Receiving Company Name Or Individual Name":
+                return "Foreign receiver";
+            case "Gateway Operator OFAC Screening Indicator":
+            case "Secondary OFAC Screening Indicator":
+                return "1".equals(v) ? "Possible OFAC match flagged" : "No OFAC flag";
             default:
                 return "";
         }

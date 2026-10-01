@@ -5,6 +5,16 @@ import com.afrunt.jach.document.ACHBatchDetail;
 import com.afrunt.jach.document.ACHDocument;
 import com.afrunt.jach.domain.BatchHeader;
 import com.afrunt.jach.domain.FileHeader;
+import com.afrunt.jach.domain.IATBatchHeader;
+import com.afrunt.jach.domain.addenda.iat.FifthIATAddendaRecord;
+import com.afrunt.jach.domain.addenda.iat.FirstIATAddendaRecord;
+import com.afrunt.jach.domain.addenda.iat.FourthIATAddendaRecord;
+import com.afrunt.jach.domain.addenda.iat.RemittanceIATAddendaRecord;
+import com.afrunt.jach.domain.addenda.iat.SecondIATAddendaRecord;
+import com.afrunt.jach.domain.addenda.iat.SeventhIATAddendaRecord;
+import com.afrunt.jach.domain.addenda.iat.SixthIATAddendaRecord;
+import com.afrunt.jach.domain.addenda.iat.ThirdIATAddendaRecord;
+import com.afrunt.jach.domain.detail.IATEntryDetail;
 import com.fx.ach.core.AchBuilder.AccountType;
 import com.fx.ach.core.AchBuilder.BatchSettings;
 import com.fx.ach.core.AchBuilder.EntryInput;
@@ -34,6 +44,7 @@ public final class AchTemplates {
         PAYROLL("Payroll – PPD direct deposit credits", "PPD", "PAYROLL"),
         VENDOR("Vendor payments – CCD credits with remittance", "CCD", "VENDOR PAY"),
         CONSUMER_DEBIT("Customer collections – WEB debits", "WEB", "SUBSCRIPTN"),
+        INTERNATIONAL("International payment – IAT to Canada", "IAT", "TRADE PMT"),
         EMPTY("Empty file – one PPD batch, no entries", "PPD", "PAYMENT");
 
         public final String title;
@@ -68,6 +79,9 @@ public final class AchTemplates {
     }
 
     public static ACHDocument create(BuiltIn template, Origin o) {
+        if (template == BuiltIn.INTERNATIONAL) {
+            return internationalPayment(o);
+        }
         ACHDocument doc = AchBuilder.newDocument(o.file());
         ACHBatch batch = AchBuilder.newBatch(new BatchSettings(template.sec, o.companyName(), o.companyId(),
                 template.description, o.effectiveDate(), o.odfiRouting(), null, null));
@@ -88,11 +102,79 @@ public final class AchTemplates {
                 add(batch, "WEB", "ALEX KIM", "CUST-501", "011000015", "11223344", AccountType.CHECKING, false, "29.99", null);
                 add(batch, "WEB", "SAM PATEL", "CUST-502", "021000021", "99887766", AccountType.SAVINGS, false, "29.99", null);
             }
-            case EMPTY -> {
+            case EMPTY, INTERNATIONAL -> {
             }
         }
         AchBuilder.finish(doc);
         return doc;
+    }
+
+    /**
+     * An outbound IAT batch: a US company paying a Canadian supplier in CAD. Every IAT entry
+     * carries the seven mandatory addenda (10–16) describing the parties and banks, plus an
+     * optional remittance addenda (17).
+     */
+    private static ACHDocument internationalPayment(Origin o) {
+        ACHDocument doc = AchBuilder.newDocument(o.file());
+        IATBatchHeader header = new IATBatchHeader();
+        header.setServiceClassCode("220");
+        header.setForeignExchangeIndicator("FV");
+        header.setForeignExchangeReferenceIndicator("3");
+        header.setISODestinationCountryCode("CA");
+        header.setOriginatorID(o.companyId());
+        header.setStandardEntryClassCode("IAT");
+        header.setCompanyEntryDescription(BuiltIn.INTERNATIONAL.description);
+        header.setISOOriginatingCurrencyCode("USD");
+        header.setISODestinationCurrencyCode("CAD");
+        header.setEffectiveEntryDate(AchFormat.toDate(o.effectiveDate()));
+        header.setOriginatorStatusCode("1");
+        header.setOriginatorDFIIdentifier(o.odfiRouting().replaceAll("\\D", "").substring(0, 8));
+        header.setBatchNumber(1);
+        ACHBatch batch = new ACHBatch().setBatchHeader(header);
+        doc.addBatch(batch);
+
+        iatEntry(batch, o, "MAPLE LEAF SUPPLY INC", "VEND-77", "200 BAY STREET", "TORONTO*ON\\", "CA*M5J2J5\\",
+                "ROYAL BANK OF CANADA", "ROYCCAT2", "004012345678", "8420.00", "INVOICE 5521 SPRING STOCK");
+        iatEntry(batch, o, "NORTHERN LOGISTICS LTD", "VEND-81", "55 GRANVILLE ST", "VANCOUVER*BC\\", "CA*V6C1T2\\",
+                "TORONTO-DOMINION BANK", "TDOMCATT", "000987654321", "1275.50", null);
+        AchBuilder.finish(doc);
+        return doc;
+    }
+
+    private static void iatEntry(ACHBatch batch, Origin o, String receiver, String receiverId, String street,
+                                 String cityState, String countryPostal, String bankName, String bic, String account,
+                                 String amount, String remittance) {
+        IATEntryDetail entry = new IATEntryDetail();
+        entry.setTransactionCode(22);
+        String gateway = "011000015"; // US gateway operator's routing number
+        entry.setReceivingDfiIdentification(gateway.substring(0, 8));
+        entry.setCheckDigit((short) Character.digit(gateway.charAt(8), 10));
+        entry.setAmount(new BigDecimal(amount));
+        entry.setAccountNumber(account);
+        entry.setAddendaRecordIndicator((short) 1);
+        entry.setTraceNumber(0L);
+        ACHBatchDetail detail = new ACHBatchDetail().setDetailRecord(entry);
+
+        detail.addAddendaRecord(new FirstIATAddendaRecord().setTransactionTypeCode("BUS")
+                .setForeignPaymentAmount(new BigDecimal(amount)).setReceivingCompanyNameOrIndividualName(receiver));
+        detail.addAddendaRecord(new SecondIATAddendaRecord().setOriginatorName(o.companyName())
+                .setOriginatorStreetAddress("100 MAIN STREET"));
+        detail.addAddendaRecord(new ThirdIATAddendaRecord().setOriginatorCityAndStateProvince("NEW YORK*NY\\")
+                .setOriginatorCountryAndPostalCode("US*10001\\"));
+        detail.addAddendaRecord(new FourthIATAddendaRecord().setOriginatingDFIName(o.file().originName())
+                .setOriginatingDFIIdentificationNumberQualifier("01").setOriginatingDFIIdentification(o.odfiRouting())
+                .setOriginatingDFIBranchCountryCode("US"));
+        detail.addAddendaRecord(new FifthIATAddendaRecord().setReceivingDFIName(bankName)
+                .setReceivingDFIIDNumberQualifier("02").setReceivingDFIIDNumber(bic).setReceivingDFIBranchCountryCode("CA"));
+        detail.addAddendaRecord(new SixthIATAddendaRecord().setReceiverIdentificationNumber(receiverId)
+                .setReceiverStreetAddress(street));
+        detail.addAddendaRecord(new SeventhIATAddendaRecord().setReceiverCityAndStateProvince(cityState)
+                .setReceiverCountryAndPostalCode(countryPostal));
+        if (remittance != null) {
+            detail.addAddendaRecord(new RemittanceIATAddendaRecord().setPaymentRelatedInformation(remittance)
+                    .setAddendaSequenceNumber(1));
+        }
+        batch.addDetail(detail);
     }
 
     private static void add(ACHBatch batch, String sec, String name, String id, String routing, String account,

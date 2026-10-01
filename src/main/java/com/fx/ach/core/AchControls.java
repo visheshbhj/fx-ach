@@ -10,6 +10,9 @@ import com.afrunt.jach.domain.EntryDetail;
 import com.afrunt.jach.domain.FileControl;
 import com.afrunt.jach.domain.addenda.GeneralAddendaRecord;
 import com.afrunt.jach.domain.addenda.ReturnAddendaRecord;
+import com.afrunt.jach.domain.addenda.iat.IATAddendaRecord;
+import com.afrunt.jach.domain.addenda.iat.RemittanceIATAddendaRecord;
+import com.afrunt.jach.domain.detail.IATEntryDetail;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -116,6 +119,9 @@ public final class AchControls {
             header.setBatchNumber(batchNumber);
             for (ACHBatchDetail detail : batch.getDetails()) {
                 detail.getDetailRecord().setAddendaRecordIndicator((short) (detail.getAddendaRecords().isEmpty() ? 0 : 1));
+                if (detail.getDetailRecord() instanceof IATEntryDetail iat) {
+                    iat.setNumberOfAddendaRecords((short) detail.getAddendaRecords().size());
+                }
             }
 
             BatchControl control = batch.getBatchControl() == null ? new BatchControl() : batch.getBatchControl();
@@ -158,6 +164,11 @@ public final class AchControls {
                     if (addenda instanceof GeneralAddendaRecord general) {
                         general.setAddendaSequenceNumber(++addendaSeq);
                         general.setEntryDetailSequenceNumber(sequence);
+                    } else if (addenda instanceof IATAddendaRecord iat) {
+                        iat.setEntryDetailSequenceNumber(sequence);
+                        if (iat instanceof RemittanceIATAddendaRecord remittance) {
+                            remittance.setAddendaSequenceNumber(++addendaSeq);
+                        }
                     } else if (addenda instanceof ReturnAddendaRecord ret) {
                         ret.setTraceNumber(BigInteger.valueOf(detail.getDetailRecord().getTraceNumber()));
                     }

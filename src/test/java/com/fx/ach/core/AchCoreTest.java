@@ -109,7 +109,7 @@ class AchCoreTest {
 
     @Test
     void sampleFilesInRepoAreValid() throws Exception {
-        for (String name : List.of("payroll.ach", "vendor.ach", "consumer_debit.ach", "returns.ach")) {
+        for (String name : List.of("payroll.ach", "vendor.ach", "consumer_debit.ach", "returns.ach", "iat.ach")) {
             ACHDocument doc = service.read(java.nio.file.Path.of("samples", name)).document();
             assertTrue(AchValidator.validate(doc).isEmpty(), name + ": " + AchValidator.validate(doc));
         }

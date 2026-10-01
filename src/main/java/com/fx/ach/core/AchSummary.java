@@ -8,6 +8,16 @@ import com.afrunt.jach.domain.BatchHeader;
 import com.afrunt.jach.domain.EntryDetail;
 import com.afrunt.jach.domain.FileHeader;
 import com.afrunt.jach.domain.GeneralBatchHeader;
+import com.afrunt.jach.domain.IATBatchHeader;
+import com.afrunt.jach.domain.addenda.iat.FifthIATAddendaRecord;
+import com.afrunt.jach.domain.addenda.iat.FirstIATAddendaRecord;
+import com.afrunt.jach.domain.addenda.iat.FourthIATAddendaRecord;
+import com.afrunt.jach.domain.addenda.iat.IATAddendaRecord;
+import com.afrunt.jach.domain.addenda.iat.RemittanceIATAddendaRecord;
+import com.afrunt.jach.domain.addenda.iat.SecondIATAddendaRecord;
+import com.afrunt.jach.domain.addenda.iat.SeventhIATAddendaRecord;
+import com.afrunt.jach.domain.addenda.iat.SixthIATAddendaRecord;
+import com.afrunt.jach.domain.addenda.iat.ThirdIATAddendaRecord;
 import com.afrunt.jach.domain.addenda.BaseCORAddendaRecord;
 import com.afrunt.jach.domain.addenda.CORAddendaRecord;
 import com.afrunt.jach.domain.addenda.GeneralAddendaRecord;
@@ -58,7 +68,10 @@ public final class AchSummary {
 
     public static BatchInfo batch(ACHBatch batch) {
         BatchHeader bh = batch.getBatchHeader();
-        String name = bh instanceof GeneralBatchHeader g ? AchFormat.trim(g.getCompanyName()) : "International";
+        String name = bh instanceof GeneralBatchHeader g ? AchFormat.trim(g.getCompanyName())
+                : bh instanceof IATBatchHeader iat ? "International → " + AchFormat.trim(iat.getISODestinationCountryCode())
+                + " (" + AchFormat.trim(iat.getISOOriginatingCurrencyCode()) + "→" + AchFormat.trim(iat.getISODestinationCurrencyCode()) + ")"
+                : "Batch";
         String sec = AchFormat.trim(bh.getStandardEntryClassCode());
         AchControls.Totals t = AchControls.totals(batch);
         return new BatchInfo(bh.getBatchNumber() == null ? 0 : bh.getBatchNumber(), name,
@@ -79,8 +92,15 @@ public final class AchSummary {
                 name = f.value();
             } else if (id.isEmpty() && n.contains("Identification Number") && !n.contains("DFI")) {
                 id = f.value();
-            } else if (n.equals("DFI Account Number") || n.equals("Foreign Receiver's Account Number")) {
+            } else if (n.equals("DFI Account Number") || n.startsWith("Foreign Receiver's Account Number")) {
                 account = f.value();
+            }
+        }
+        for (AddendaRecord a : detail.getAddendaRecords()) {
+            if (a instanceof FirstIATAddendaRecord first) {
+                name = AchFormat.trim(first.getReceivingCompanyNameOrIndividualName());
+            } else if (a instanceof SixthIATAddendaRecord sixth && id.isEmpty()) {
+                id = AchFormat.trim(sixth.getReceiverIdentificationNumber());
             }
         }
         int code = e.getTransactionCode() == null ? 0 : e.getTransactionCode();
@@ -98,6 +118,9 @@ public final class AchSummary {
     public static String note(ACHBatchDetail detail) {
         List<String> parts = new ArrayList<>();
         for (AddendaRecord a : detail.getAddendaRecords()) {
+            if (a instanceof IATAddendaRecord && !(a instanceof RemittanceIATAddendaRecord) && !(a instanceof FifthIATAddendaRecord)) {
+                continue; // party/address addenda are summarised elsewhere
+            }
             parts.add(addenda(a));
         }
         return String.join(" | ", parts);
@@ -106,6 +129,32 @@ public final class AchSummary {
     public static String addenda(AddendaRecord a) {
         if (a instanceof GeneralAddendaRecord g) {
             return AchFormat.trim(g.getPaymentRelatedInformation());
+        }
+        if (a instanceof FirstIATAddendaRecord f) {
+            return "Receiver " + AchFormat.trim(f.getReceivingCompanyNameOrIndividualName()) + " · "
+                    + AchFormat.trim(f.getTransactionTypeCode()) + " · foreign amount " + f.getForeignPaymentAmount();
+        }
+        if (a instanceof SecondIATAddendaRecord s) {
+            return "Originator " + AchFormat.trim(s.getOriginatorName()) + ", " + AchFormat.trim(s.getOriginatorStreetAddress());
+        }
+        if (a instanceof ThirdIATAddendaRecord t) {
+            return "Originator " + AchFormat.trim(t.getOriginatorCityAndStateProvince()) + " " + AchFormat.trim(t.getOriginatorCountryAndPostalCode());
+        }
+        if (a instanceof FourthIATAddendaRecord f) {
+            return "Originating bank " + AchFormat.trim(f.getOriginatingDFIName()) + " " + AchFormat.trim(f.getOriginatingDFIIdentification());
+        }
+        if (a instanceof FifthIATAddendaRecord f) {
+            return "Receiving bank " + AchFormat.trim(f.getReceivingDFIName()) + " " + AchFormat.trim(f.getReceivingDFIIDNumber())
+                    + " (" + AchFormat.trim(f.getReceivingDFIBranchCountryCode()) + ")";
+        }
+        if (a instanceof SixthIATAddendaRecord s) {
+            return "Receiver " + AchFormat.trim(s.getReceiverIdentificationNumber()) + ", " + AchFormat.trim(s.getReceiverStreetAddress());
+        }
+        if (a instanceof SeventhIATAddendaRecord s) {
+            return "Receiver " + AchFormat.trim(s.getReceiverCityAndStateProvince()) + " " + AchFormat.trim(s.getReceiverCountryAndPostalCode());
+        }
+        if (a instanceof RemittanceIATAddendaRecord r) {
+            return AchFormat.trim(r.getPaymentRelatedInformation());
         }
         if (a instanceof ReturnAddendaRecord r) {
             String code = AchFormat.trim(r.getReturnReasonCode());

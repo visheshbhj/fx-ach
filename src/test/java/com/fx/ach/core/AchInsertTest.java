@@ -9,10 +9,12 @@ import com.fx.ach.core.AchInsert.Where;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AchInsertTest {
@@ -53,5 +55,46 @@ class AchInsertTest {
         assertEquals("NEW CO", AchSummary.entry(service, reread.getBatches().get(0).getDetails().get(0)).name());
         assertEquals(0, new BigDecimal("13361.40").compareTo(reread.getFileControl().getTotalCredits()));
         assertTrue(AchValidator.validate(reread).isEmpty(), AchValidator.validate(reread).toString());
+    }
+
+    @Test
+    void lineIndexMatchesWhereRecordsLand() {
+        List<ACHRecord> records = AchService.records(doc);
+        ACHRecord firstEntry = batch.getDetails().get(0).getDetailRecord();
+        assertEquals(records.indexOf(firstEntry), AchInsert.lineIndex(doc, new Slot(Kind.ENTRY, 0, 0, -1)));
+        assertEquals(records.indexOf(batch.getBatchControl()), AchInsert.lineIndex(doc, new Slot(Kind.ENTRY, 0, 2, -1)));
+        assertEquals(records.indexOf(firstEntry) + 2, AchInsert.lineIndex(doc, new Slot(Kind.ADDENDA, 0, 0, 1)));
+        assertEquals(records.indexOf(doc.getFileControl()), AchInsert.lineIndex(doc, new Slot(Kind.BATCH, 1, -1, -1)));
+    }
+
+    @Test
+    void pastedRawLineReplacesAndInserts() {
+        String entryLine = batch.getDetails().get(1).getDetailRecord().getRecord();
+        int index = AchService.records(doc).indexOf(batch.getDetails().get(1).getDetailRecord());
+
+        // update: change the amount inside the pasted line (CRLF and stripped trailing spaces are tolerated)
+        String edited = (entryLine.substring(0, 29) + "0000099999" + entryLine.substring(39)).stripTrailing() + "\r\n";
+        ACHDocument updated = service.splice(doc, index, 1, edited);
+        assertEquals(0, new BigDecimal("999.99").compareTo(updated.getBatches().get(0).getDetails().get(1).getDetailRecord().getAmount()));
+
+        // insert: the same entry line again before the first entry
+        ACHDocument inserted = service.splice(doc, 2, 0, entryLine);
+        assertEquals(3, inserted.getBatches().get(0).getDetails().size());
+        assertEquals("INITECH LLC", AchSummary.entry(service, inserted.getBatches().get(0).getDetails().get(0)).name());
+
+        // a line that doesn't fit the structure is rejected by the parser
+        assertThrows(AchException.class, () -> service.splice(doc, 1, 0, entryLine));
+        assertThrows(AchException.class, () -> service.splice(doc, 2, 0, "hello"));
+    }
+
+    @Test
+    void iatTemplateReadsAsInternational() {
+        ACHDocument iat = service.normalise(AchTemplates.create(AchTemplates.BuiltIn.INTERNATIONAL, AchTemplates.sampleOrigin()));
+        AchSummary.EntryInfo e = AchSummary.entry(service, iat.getBatches().get(0).getDetails().get(0));
+        assertEquals("MAPLE LEAF SUPPLY INC", e.name());
+        assertEquals("004012345678", e.account());
+        assertEquals(8, iat.getBatches().get(0).getDetails().get(0).getAddendaRecords().size());
+        assertTrue(AchSummary.batch(iat.getBatches().get(0)).companyName().contains("CA (USD→CAD)"));
+        assertTrue(AchValidator.validate(iat).isEmpty(), AchValidator.validate(iat).toString());
     }
 }

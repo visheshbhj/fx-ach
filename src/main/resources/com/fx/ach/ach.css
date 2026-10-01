@@ -93,3 +93,4 @@
 .form-section { -fx-font-weight: bold; -fx-padding: 10 0 0 0; -fx-text-fill: -accent; }
 .form-error { -fx-text-fill: -debit; -fx-font-weight: bold; }
 .preview { -fx-font-weight: bold; -fx-text-fill: -accent; }
+.raw-section .text-area { -fx-font-size: 12px; }

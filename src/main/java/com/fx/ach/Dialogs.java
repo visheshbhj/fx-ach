@@ -21,7 +21,9 @@ import javafx.scene.control.DatePicker;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
 import javafx.scene.control.RadioButton;
+import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
+import javafx.scene.control.TitledPane;
 import javafx.scene.control.TextFormatter;
 import javafx.scene.control.ToggleGroup;
 import javafx.scene.layout.GridPane;
@@ -40,6 +42,13 @@ import java.util.function.Supplier;
 final class Dialogs {
 
     record TemplateOptions(LocalDate effectiveDate, boolean clearAmounts) {
+    }
+
+    /** What an "add" dialog produced: either a record built from the form, or pasted raw line(s). */
+    record Result<T>(T built, String raw) {
+        boolean isRaw() {
+            return raw != null;
+        }
     }
 
     private Dialogs() {
@@ -88,9 +97,11 @@ final class Dialogs {
 
     // ---- batch -------------------------------------------------------------------------------
 
-    static Optional<ACHBatch> batch(Window owner, BatchHeader like) {
+    static Optional<Result<ACHBatch>> batch(Window owner, BatchHeader like) {
         GeneralBatchHeader g = like instanceof GeneralBatchHeader gb ? gb : null;
         Form form = new Form("Add batch", "A batch groups entries of one type from one company with one effective date.");
+        form.rawPaste("Paste a batch header (5), optionally with its entries/addenda (6/7) and batch control (8). "
+                + "Any SEC code works this way, including IAT.");
         ComboBox<String> sec = form.combo("Entry type (SEC code)", AchBuilder.BUILDABLE_SEC,
                 g == null ? "PPD" : AchFormat.trim(g.getStandardEntryClassCode()));
         Label secHint = form.hint(AchCodes.describe(AchCodes.SEC, sec.getValue()));
@@ -107,16 +118,20 @@ final class Dialogs {
         DatePicker effective = form.date("Effective entry date", AchFormat.nextBusinessDay(LocalDate.now()), null);
         TextField odfi = form.text("Your bank's routing (ODFI)", g == null ? Prefs.origin().odfiRouting()
                 : AchFormat.trim(g.getOriginatorDFIIdentifier()), 9, "8 or 9 digits");
-        return form.show(owner, () -> AchBuilder.newBatch(new AchBuilder.BatchSettings(sec.getValue(), company.getText(),
+        return form.showWithRaw(owner, () -> AchBuilder.newBatch(new AchBuilder.BatchSettings(sec.getValue(), company.getText(),
                 companyId.getText(), description.getText(), effective.getValue(), odfi.getText(),
                 discretionary.getText(), descriptive.getText())));
     }
 
     // ---- entry -------------------------------------------------------------------------------
 
-    static Optional<ACHBatchDetail> entry(Window owner, String sec) {
+    static Optional<Result<ACHBatchDetail>> entry(Window owner, String sec) {
         boolean corporate = "CCD".equals(sec);
         Form form = new Form("Add " + sec + " entry", AchCodes.describe(AchCodes.SEC, sec));
+        form.rawPaste("Paste an entry detail (6) and, optionally, its addenda (7).");
+        if (!AchBuilder.BUILDABLE_SEC.contains(sec)) {
+            form.hint("The form below supports PPD, CCD, WEB and TEL; for " + sec + " paste the raw lines above.");
+        }
         TextField name = form.text(corporate ? "Receiving company" : "Receiver name", "", 22, null);
         TextField id = form.text("Identification number", "", 15,
                 "WEB".equals(sec) || "TEL".equals(sec) ? "Required: your reference for this customer" : "Optional reference, e.g. employee number");
@@ -166,7 +181,7 @@ final class Dialogs {
         update.run();
 
         ComboBox<String> pt = paymentType;
-        return form.show(owner, () -> {
+        return form.showWithRaw(owner, () -> {
             BigDecimal value;
             if (prenote.isSelected()) {
                 value = BigDecimal.ZERO;
@@ -183,6 +198,37 @@ final class Dialogs {
         });
     }
 
+    // ---- addenda ----------------------------------------------------------------------------
+
+    static Optional<Result<String>> addenda(Window owner) {
+        Form form = new Form("Add addenda", "Payment-related information (addenda type 05) shown to the receiver.");
+        form.rawPaste("Paste any addenda record(s) (7), e.g. a return (99), NOC (98) or IAT addenda.");
+        TextField text = form.text("Remittance text", "", 80, "Up to 80 characters, e.g. INV 10045 PO 2231");
+        return form.showWithRaw(owner, () -> {
+            if (text.getText().isBlank()) {
+                throw new AchException("Enter the remittance text, or paste raw addenda line(s).");
+            }
+            return text.getText().trim();
+        });
+    }
+
+    // ---- whole file from pasted text ---------------------------------------------------------
+
+    static Optional<String> pastedFile(Window owner) {
+        Form form = new Form("New from pasted text", "Paste the full contents of an ACH file (header 1 through file control 9).");
+        TextArea area = new TextArea();
+        area.getStyleClass().add("mono");
+        area.setPrefRowCount(16);
+        area.setPrefColumnCount(96);
+        form.row("File contents", area);
+        return form.show(owner, () -> {
+            if (area.getText().isBlank()) {
+                throw new AchException("Paste the file contents first.");
+            }
+            return area.getText();
+        });
+    }
+
     // ---- small form builder ----------------------------------------------------------------
 
     /** A two-column label/control grid in a dialog whose OK button validates before closing. */
@@ -190,6 +236,7 @@ final class Dialogs {
         private final Dialog<Object> dialog = new Dialog<>();
         private final GridPane grid = new GridPane();
         private final Label error = new Label();
+        private TextArea raw;
         private int row;
 
         Form(String title, String intro) {
@@ -205,6 +252,22 @@ final class Dialogs {
             dialog.getDialogPane().setContent(new VBox(10, grid, error));
             dialog.getDialogPane().setMinWidth(640);
             dialog.getDialogPane().getStylesheets().add(Dialogs.class.getResource("ach.css").toExternalForm());
+        }
+
+        /** Adds a collapsible "paste raw line(s)" box; when filled it is used instead of the form. */
+        void rawPaste(String hint) {
+            raw = new TextArea();
+            raw.getStyleClass().add("mono");
+            raw.setPrefRowCount(3);
+            raw.setPrefColumnCount(70);
+            raw.setPromptText("Paste raw 94-character record(s) here…");
+            Label info = small("When this box has text, the form fields below are ignored.\n" + hint);
+            info.setWrapText(true);
+            info.setMaxWidth(560);
+            TitledPane pane = new TitledPane("Or paste raw line(s) instead of filling in the form", new VBox(4, raw, info));
+            pane.setExpanded(false);
+            pane.setAnimated(false);
+            grid.add(pane, 0, row++, 2, 1);
         }
 
         TextField text(String label, String value, int max, String hint) {
@@ -275,6 +338,17 @@ final class Dialogs {
             field.textProperty().addListener(o -> check.run());
             check.run();
             grid.add(status, 1, row++);
+        }
+
+        /** Like {@link #show} but returns pasted raw lines when the raw box was used. */
+        <T> Optional<Result<T>> showWithRaw(Window owner, Supplier<T> build) {
+            return show(owner, () -> {
+                if (raw != null && !raw.getText().isBlank()) {
+                    com.fx.ach.core.AchService.pastedLines(raw.getText()); // validate early, inline
+                    return new Result<T>(null, raw.getText());
+                }
+                return new Result<>(build.get(), null);
+            });
         }
 
         @SuppressWarnings("unchecked")

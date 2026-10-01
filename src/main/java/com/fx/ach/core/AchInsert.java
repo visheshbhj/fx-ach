@@ -6,6 +6,7 @@ import com.afrunt.jach.document.ACHDocument;
 import com.afrunt.jach.domain.ACHRecord;
 import com.afrunt.jach.domain.AddendaRecord;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -114,6 +115,29 @@ public final class AchInsert {
 
     public static void insert(ACHDocument doc, Slot slot, AddendaRecord addenda) {
         doc.getBatches().get(slot.batch()).getDetails().get(slot.detail()).getAddendaRecords().add(slot.addenda(), addenda);
+    }
+
+    /** Index (in file order, as {@link AchService#records}) at which a record placed in the slot will sit. */
+    public static int lineIndex(ACHDocument doc, Slot slot) {
+        List<ACHRecord> records = AchService.records(doc);
+        if (slot.kind() == Kind.BATCH) {
+            return slot.batch() < doc.getBatches().size()
+                    ? records.indexOf(doc.getBatches().get(slot.batch()).getBatchHeader())
+                    : records.indexOf(doc.getFileControl());
+        }
+        ACHBatch batch = doc.getBatches().get(slot.batch());
+        if (slot.kind() == Kind.ENTRY) {
+            if (slot.detail() < batch.getDetails().size()) {
+                return records.indexOf(batch.getDetails().get(slot.detail()).getDetailRecord());
+            }
+            List<ACHRecord> batchRecords = AchService.records(batch);
+            ACHRecord last = batchRecords.get(batchRecords.size() - 1);
+            return batch.getBatchControl() != null ? records.indexOf(batch.getBatchControl()) : records.indexOf(last) + 1;
+        }
+        ACHBatchDetail detail = batch.getDetails().get(slot.detail());
+        return slot.addenda() < detail.getAddendaRecords().size()
+                ? records.indexOf(detail.getAddendaRecords().get(slot.addenda()))
+                : records.indexOf(detail.getDetailRecord()) + 1 + detail.getAddendaRecords().size();
     }
 
     /** After insertion (and any re-parse), the record that now occupies the slot. */

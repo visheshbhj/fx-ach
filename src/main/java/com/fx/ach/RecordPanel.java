@@ -14,7 +14,9 @@ import javafx.scene.control.Control;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TextField;
+import javafx.scene.control.TextArea;
 import javafx.scene.control.TextFormatter;
+import javafx.scene.control.TitledPane;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
@@ -32,6 +34,20 @@ import java.util.function.Supplier;
  */
 class RecordPanel extends BorderPane {
 
+    enum RawAction {
+        REPLACE("Replace this record"), BEFORE("Insert before"), AFTER("Insert after");
+
+        final String label;
+
+        RawAction(String label) {
+            this.label = label;
+        }
+    }
+
+    interface RawHandler {
+        void handle(RawAction action, ACHRecord record, String text);
+    }
+
     /** Fields whose values come from a fixed code list get a drop-down instead of a text box. */
     private static final Map<String, Map<String, String>> CODE_LISTS = Map.of(
             "Transaction Code", AchCodes.TRANSACTION,
@@ -42,6 +58,10 @@ class RecordPanel extends BorderPane {
 
     private final AchService service;
     private final BiConsumer<ACHRecord, Map<FieldView, String>> onApply;
+    private final RawHandler onRaw;
+    private final TextArea rawArea = new TextArea();
+    private final Label rawInfo = new Label();
+    private final TitledPane rawPane;
     private final BooleanProperty dirty = new SimpleBooleanProperty();
     private final Map<FieldView, Supplier<String>> inputs = new LinkedHashMap<>();
     private final Map<Integer, Control> controlsByStart = new LinkedHashMap<>();
@@ -52,9 +72,11 @@ class RecordPanel extends BorderPane {
     private final Label modeHint = new Label();
     private ACHRecord record;
 
-    RecordPanel(AchService service, BiConsumer<ACHRecord, Map<FieldView, String>> onApply) {
+    RecordPanel(AchService service, BiConsumer<ACHRecord, Map<FieldView, String>> onApply, RawHandler onRaw) {
         this.service = service;
         this.onApply = onApply;
+        this.onRaw = onRaw;
+        this.rawPane = rawSection();
         getStyleClass().add("record-panel");
 
         title.getStyleClass().add("h2");
@@ -89,6 +111,59 @@ class RecordPanel extends BorderPane {
         setCenter(scroll);
         setEditMode(false);
         show(null, "");
+    }
+
+    /**
+     * Paste or edit raw 94-character line(s): replace the current record with them, or insert them
+     * before/after it. Several lines may be pasted at once (e.g. a whole batch).
+     */
+    private TitledPane rawSection() {
+        rawArea.getStyleClass().add("mono");
+        rawArea.setPrefRowCount(2);
+        rawArea.setWrapText(false);
+        rawArea.setPromptText("Paste one or more 94-character records here");
+        rawArea.textProperty().addListener(o -> rawInfo.setText(rawSummary(rawArea.getText())));
+        rawInfo.getStyleClass().add("muted");
+        rawInfo.setWrapText(true);
+        HBox buttons = new HBox(6);
+        for (RawAction action : RawAction.values()) {
+            Button b = new Button(action.label);
+            b.setOnAction(e -> {
+                if (record != null) {
+                    onRaw.handle(action, record, rawArea.getText());
+                }
+            });
+            buttons.getChildren().add(b);
+        }
+        Label hint = new Label("Edit the line above to update this record, or paste new line(s) and insert them. "
+                + "Short lines are padded; CR/LF is ignored.");
+        hint.getStyleClass().add("muted");
+        hint.setWrapText(true);
+        TitledPane pane = new TitledPane("Raw line – paste to update or insert", new VBox(6, rawArea, rawInfo, buttons, hint));
+        pane.setAnimated(false);
+        pane.getStyleClass().add("raw-section");
+        return pane;
+    }
+
+    /** "1 line · 94 chars · Entry Detail" style feedback for the raw box. */
+    static String rawSummary(String text) {
+        List<String> lines = text.lines().map(l -> l.replace("\r", "")).filter(l -> !l.isBlank()).toList();
+        if (lines.isEmpty()) {
+            return "Empty";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (String l : lines) {
+            if (sb.length() > 0) {
+                sb.append("\n");
+            }
+            String type = AchCodes.RECORD_TYPE.getOrDefault(l.substring(0, 1), "✖ unknown record type");
+            String len = l.length() == AchService.RECORD_LENGTH ? "94 chars ✔"
+                    : l.length() < AchService.RECORD_LENGTH ? l.length() + " chars (will be padded)"
+                    : l.stripTrailing().length() <= AchService.RECORD_LENGTH ? "94 chars + trailing spaces"
+                    : "✖ " + l.length() + " chars – too long";
+            sb.append(type).append(" · ").append(len);
+        }
+        return lines.size() + " line(s):\n" + sb;
     }
 
     void setEditMode(boolean on) {
@@ -140,6 +215,7 @@ class RecordPanel extends BorderPane {
         controlsByStart.clear();
         fieldsBox.getChildren().clear();
         dirty.set(false);
+        rawArea.setText(record == null || record.getRecord() == null ? "" : record.getRecord());
         if (record == null) {
             title.setText("Nothing selected");
             subtitle.setText("Select a record in the file to see and edit its fields here.");
@@ -149,6 +225,7 @@ class RecordPanel extends BorderPane {
                 + (record.getLineNumber() > 0 ? "  (line " + record.getLineNumber() + ")" : ""));
         subtitle.setText(summary);
 
+        fieldsBox.getChildren().add(rawPane);
         List<FieldView> fields = service.fields(record);
         for (int i = 0; i < fields.size(); i++) {
             FieldView f = fields.get(i);

@@ -110,6 +110,40 @@ public class AchService {
         }
     }
 
+    /**
+     * Replaces {@code remove} records starting at record {@code index} with pasted raw line(s) and
+     * re-parses the whole file, so jACH decides each line's record type and rejects lines that
+     * don't fit the file structure at that position.
+     */
+    public ACHDocument splice(ACHDocument doc, int index, int remove, String pasted) {
+        List<String> newLines = pastedLines(pasted);
+        List<String> lines = new ArrayList<>();
+        for (ACHRecord r : records(doc)) {
+            lines.add(r.getRecord() != null ? r.getRecord() : line(r));
+        }
+        if (index < 0 || index + remove > lines.size()) {
+            throw new AchException("Position " + index + " is outside the file.");
+        }
+        lines.subList(index, index + remove).clear();
+        lines.addAll(index, newLines);
+        return read(String.join("\n", lines)).document();
+    }
+
+    /** Cleans pasted text into 94-character records (CR/LF stripped, short lines padded). */
+    public static List<String> pastedLines(String pasted) {
+        List<String> lines = normalise(pasted == null ? "" : pasted, new ArrayList<>());
+        if (lines.isEmpty()) {
+            throw new AchException("Paste at least one 94-character record.");
+        }
+        for (String line : lines) {
+            if (!AchCodes.RECORD_TYPE.containsKey(line.substring(0, 1))) {
+                throw new AchException("\"" + line.substring(0, Math.min(20, line.length())).trim()
+                        + "…\" does not start with a record type code (1, 5, 6, 7, 8 or 9).");
+            }
+        }
+        return lines;
+    }
+
     /** Serialises and re-parses, so every record carries its canonical 94-char line and line number. */
     public ACHDocument normalise(ACHDocument document) {
         return read(write(document, false)).document();
