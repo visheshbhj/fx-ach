@@ -6,12 +6,18 @@ import com.afrunt.jach.document.ACHDocument;
 import com.afrunt.jach.domain.ACHRecord;
 import com.afrunt.jach.domain.AddendaRecord;
 import com.afrunt.jach.domain.BatchControl;
+import com.afrunt.jach.domain.BatchHeader;
+import com.afrunt.jach.domain.EntryDetail;
 import com.afrunt.jach.domain.FileControl;
 import com.fx.ach.core.AchBuilder;
 import com.fx.ach.core.AchCodes;
 import com.fx.ach.core.AchControls;
 import com.fx.ach.core.AchException;
 import com.fx.ach.core.AchFormat;
+import com.fx.ach.core.AchInsert;
+import com.fx.ach.core.AchInsert.Kind;
+import com.fx.ach.core.AchInsert.Slot;
+import com.fx.ach.core.AchInsert.Where;
 import com.fx.ach.core.AchReport;
 import com.fx.ach.core.AchService;
 import com.fx.ach.core.AchSummary;
@@ -20,9 +26,11 @@ import com.fx.ach.core.AchValidator;
 import com.fx.ach.core.FieldView;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
+import javafx.geometry.Pos;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
@@ -31,14 +39,16 @@ import javafx.scene.control.MenuButton;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SeparatorMenuItem;
-import javafx.scene.control.Tab;
+import javafx.scene.control.SplitPane;
 import javafx.scene.control.TabPane;
 import javafx.scene.control.TextInputDialog;
-import javafx.scene.control.TreeCell;
-import javafx.scene.control.TreeItem;
-import javafx.scene.control.TreeView;
+import javafx.scene.control.ToggleButton;
+import javafx.scene.input.KeyCode;
 import javafx.scene.input.TransferMode;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.StackPane;
+import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 
@@ -53,24 +63,21 @@ import java.util.Deque;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 public class MainController {
-
-    /** A row in the structure tree. */
-    record Node(String label, ACHRecord record, String styleClass) {
-    }
 
     @FXML private BorderPane root;
     @FXML private Menu newMenu;
     @FXML private MenuButton newButton;
     @FXML private Label statusBadge;
-    @FXML private TreeView<Node> tree;
+    @FXML private ToggleButton notRawToggle;
+    @FXML private ToggleButton editModeToggle;
+    @FXML private SplitPane mainSplit;
     @FXML private TabPane tabs;
-    @FXML private Tab overviewTab;
-    @FXML private Tab recordTab;
-    @FXML private Tab rawTab;
+    @FXML private StackPane fileStack;
+    @FXML private VBox rawPane;
     @FXML private ScrollPane overviewScroll;
-    @FXML private ScrollPane recordScroll;
     @FXML private ListView<ACHRecord> rawList;
     @FXML private Label ruler;
     @FXML private ListView<AchValidator.Issue> issuesList;
@@ -79,6 +86,9 @@ public class MainController {
 
     private final AchService service = new AchService();
     private final Deque<String> undo = new ArrayDeque<>();
+    private RecordPanel recordPanel;
+    private FormView formView;
+    private boolean formViewStale = true;
     private Stage stage;
     private ACHDocument doc;
     private Path file;
@@ -90,44 +100,44 @@ public class MainController {
     void init(Stage stage) {
         this.stage = stage;
         rebuildNewMenus();
-        tree.setCellFactory(t -> new TreeCell<>() {
-            @Override
-            protected void updateItem(Node item, boolean empty) {
-                super.updateItem(item, empty);
-                getStyleClass().removeIf(s -> s.startsWith("node-"));
-                setText(empty || item == null ? null : item.label());
-                if (!empty && item != null) {
-                    getStyleClass().add(item.styleClass());
-                }
+
+        recordPanel = new RecordPanel(service, this::applyEdits);
+        recordPanel.setMinWidth(320);
+        mainSplit.getItems().add(recordPanel);
+        mainSplit.setDividerPositions(0.66);
+        SplitPane.setResizableWithParent(recordPanel, false);
+
+        formView = new FormView(service, r -> requestSelect(r, false), this::contextMenu);
+        formView.setVisible(false);
+        fileStack.getChildren().add(formView);
+        notRawToggle.selectedProperty().addListener((o, was, notRaw) -> {
+            rawPane.setVisible(!notRaw);
+            formView.setVisible(notRaw);
+            if (notRaw && formViewStale) {
+                formView.show(doc);
+                formViewStale = false;
+            }
+            if (selected != null) {
+                showRecord(selected, true);
             }
         });
-        tree.getSelectionModel().selectedItemProperty().addListener((o, a, item) -> {
-            if (!syncing && item != null && item.getValue().record() != null) {
-                select(item.getValue().record(), false);
-            }
+        editModeToggle.selectedProperty().addListener((o, was, on) -> {
+            recordPanel.setEditMode(on);
+            status(on ? "Edit mode on: field changes are applied automatically when you move to another record."
+                    : "Edit mode off: you'll be asked before unapplied changes are lost.");
         });
 
-        rawList.setCellFactory(l -> new ListCell<>() {
-            @Override
-            protected void updateItem(ACHRecord r, boolean empty) {
-                super.updateItem(r, empty);
-                getStyleClass().removeIf(s -> s.startsWith("rt-"));
-                if (empty || r == null) {
-                    setText(null);
-                } else {
-                    setText(String.format("%4d  %s", r.getLineNumber(), r.getRecord()));
-                    getStyleClass().add("rt-" + r.getRecordTypeCode());
-                }
+        rawList.setCellFactory(l -> new RawCell());
+        rawList.getSelectionModel().selectedItemProperty().addListener((o, previous, r) -> {
+            if (!syncing && r != null && r != selected && !requestSelect(r, false)) {
+                syncing = true;
+                rawList.getSelectionModel().select(selected);
+                syncing = false;
             }
         });
-        rawList.getSelectionModel().selectedItemProperty().addListener((o, a, r) -> {
-            if (!syncing && r != null) {
-                select(r, false);
-            }
-        });
-        rawList.setOnMouseClicked(e -> {
-            if (e.getClickCount() == 2 && selected != null) {
-                tabs.getSelectionModel().select(recordTab);
+        rawList.setOnKeyPressed(e -> {
+            if (e.getCode() == KeyCode.DELETE) {
+                onDelete();
             }
         });
         ruler.setText(rulerText());
@@ -145,9 +155,11 @@ public class MainController {
                 }
             }
         });
-        issuesList.getSelectionModel().selectedItemProperty().addListener((o, a, issue) -> {
-            if (!syncing && issue != null && issue.record() != null) {
-                select(issue.record(), true);
+        issuesList.setOnMouseClicked(e -> {
+            AchValidator.Issue issue = issuesList.getSelectionModel().getSelectedItem();
+            if (issue != null && issue.record() != null) {
+                tabs.getSelectionModel().select(0);
+                requestSelect(issue.record(), true);
             }
         });
 
@@ -171,6 +183,241 @@ public class MainController {
             }
         });
         refresh();
+    }
+
+    // ---- raw view ----------------------------------------------------------------------------
+
+    /** One raw record, every field shaded in its own colour with a tooltip naming it. */
+    private final class RawCell extends ListCell<ACHRecord> {
+        RawCell() {
+            setOnContextMenuRequested(e -> {
+                ACHRecord r = getItem();
+                if (r != null && requestSelect(r, false)) {
+                    contextMenu(selected).show(this, e.getScreenX(), e.getScreenY());
+                }
+                e.consume();
+            });
+        }
+
+        @Override
+        protected void updateItem(ACHRecord r, boolean empty) {
+            super.updateItem(r, empty);
+            setText(null);
+            if (empty || r == null) {
+                setGraphic(null);
+                return;
+            }
+            Label number = new Label(String.format("%4d  ", r.getLineNumber()));
+            number.getStyleClass().addAll("line-number", "rt-" + r.getRecordTypeCode());
+            HBox line = new HBox(number);
+            line.setAlignment(Pos.CENTER_LEFT);
+            List<FieldView> fields = service.fields(r);
+            for (int i = 0; i < fields.size(); i++) {
+                FieldView f = fields.get(i);
+                Label seg = FieldColors.segment(f, i);
+                seg.setOnMouseClicked(e -> {
+                    if (selected == r && e.getClickCount() == 1) {
+                        recordPanel.focusField(f.start());
+                    }
+                });
+                line.getChildren().add(seg);
+            }
+            setGraphic(line);
+        }
+    }
+
+    // ---- selection ---------------------------------------------------------------------------
+
+    /**
+     * Moves the selection to {@code target}, first dealing with unapplied edits in the record panel:
+     * applied silently in edit mode, otherwise the user chooses. Returns false if they cancelled.
+     */
+    boolean requestSelect(ACHRecord target, boolean scroll) {
+        if (target == null) {
+            return false;
+        }
+        if (recordPanel.isDirty() && recordPanel.record() != target) {
+            int targetIndex = indexOf(target);
+            if (!resolvePendingEdits()) {
+                return false;
+            }
+            target = recordAt(targetIndex);
+        }
+        showRecord(target, scroll);
+        return true;
+    }
+
+    private void showRecord(ACHRecord record, boolean scroll) {
+        selected = record;
+        recordPanel.show(record, describe(record));
+        syncing = true;
+        try {
+            rawList.getSelectionModel().select(record);
+            if (scroll) {
+                rawList.scrollTo(Math.max(0, rawList.getSelectionModel().getSelectedIndex() - 3));
+            }
+        } finally {
+            syncing = false;
+        }
+        if (formView.isVisible()) {
+            formView.reveal(record);
+        }
+    }
+
+    /** Returns true when there are no unapplied edits left (applied or discarded). */
+    private boolean resolvePendingEdits() {
+        if (!recordPanel.isDirty()) {
+            return true;
+        }
+        if (editModeToggle.isSelected()) {
+            return applyEdits(recordPanel.record(), recordPanel.edits());
+        }
+        ButtonType apply = new ButtonType("Apply changes", ButtonBar.ButtonData.YES);
+        ButtonType discard = new ButtonType("Discard", ButtonBar.ButtonData.NO);
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION,
+                "You changed " + recordPanel.edits().size() + " field(s) of this record without applying them.\n"
+                        + "Tip: turn on Edit mode to apply changes automatically.", apply, discard, ButtonType.CANCEL);
+        alert.initOwner(stage);
+        alert.setHeaderText("Apply your changes?");
+        ButtonType choice = alert.showAndWait().orElse(ButtonType.CANCEL);
+        if (choice == apply) {
+            return applyEdits(recordPanel.record(), recordPanel.edits());
+        }
+        if (choice == discard) {
+            recordPanel.show(recordPanel.record(), describe(recordPanel.record()));
+            return true;
+        }
+        return false;
+    }
+
+    // ---- context menu: insert before / after ------------------------------------------------
+
+    ContextMenu contextMenu(ACHRecord record) {
+        ContextMenu menu = new ContextMenu();
+        if (doc == null || record == null) {
+            return menu;
+        }
+        for (Where where : Where.values()) {
+            Menu sub = new Menu(where == Where.BEFORE ? "Insert before" : "Insert after");
+            for (Kind kind : Kind.values()) {
+                Optional<Slot> slot = AchInsert.slot(doc, record, kind, where);
+                MenuItem item = new MenuItem(insertLabel(record, kind, where));
+                String blocker = slot.isEmpty() ? "not allowed here" : insertBlocker(slot.get());
+                if (blocker != null) {
+                    item.setText(item.getText() + "  (" + blocker + ")");
+                    item.setDisable(true);
+                } else {
+                    item.setOnAction(e -> insert(slot.get(), batchTemplate(record)));
+                }
+                sub.getItems().add(item);
+            }
+            menu.getItems().add(sub);
+        }
+        MenuItem delete = new MenuItem("Delete this record");
+        delete.setDisable(record == doc.getFileHeader() || record == doc.getFileControl());
+        delete.setOnAction(e -> onDelete());
+        menu.getItems().addAll(new SeparatorMenuItem(), delete);
+        return menu;
+    }
+
+    private String insertLabel(ACHRecord anchor, Kind kind, Where where) {
+        boolean insideBatch = !(anchor == doc.getFileHeader() || anchor == doc.getFileControl());
+        return switch (kind) {
+            case BATCH -> insideBatch ? "Batch… (" + (where == Where.BEFORE ? "before" : "after") + " this whole batch)" : "Batch…";
+            case ENTRY -> "Entry…";
+            case ADDENDA -> "Addenda (remittance note)…";
+        };
+    }
+
+    /** Why a slot can't be filled from a form, or null if it can. */
+    private String insertBlocker(Slot slot) {
+        if (slot.kind() == Kind.BATCH) {
+            return null;
+        }
+        String sec = AchFormat.trim(AchInsert.batchOf(doc, slot).getBatchHeader().getStandardEntryClassCode());
+        if (slot.kind() == Kind.ENTRY && !AchBuilder.BUILDABLE_SEC.contains(sec)) {
+            return "forms support PPD/CCD/WEB/TEL, this batch is " + sec;
+        }
+        if (slot.kind() == Kind.ADDENDA && "TEL".equals(sec)) {
+            return "TEL entries can't have addenda";
+        }
+        return null;
+    }
+
+    private BatchHeader batchTemplate(ACHRecord anchor) {
+        for (ACHBatch batch : doc.getBatches()) {
+            if (AchService.records(batch).contains(anchor)) {
+                return batch.getBatchHeader();
+            }
+        }
+        return doc.getBatches().isEmpty() ? null : doc.getBatches().get(doc.getBatches().size() - 1).getBatchHeader();
+    }
+
+    /** Asks for the new record's details, then inserts it at the slot. */
+    private void insert(Slot slot, BatchHeader templateHeader) {
+        if (!resolvePendingEdits()) {
+            return;
+        }
+        Supplier<ACHRecord> inserted = () -> AchInsert.recordAt(doc, slot);
+        switch (slot.kind()) {
+            case BATCH -> Dialogs.batch(stage, templateHeader).ifPresent(batch -> commit("Inserted batch", () -> {
+                batch.setBatchControl(new BatchControl());
+                AchInsert.insert(doc, slot, batch);
+                AchControls.recalculate(doc);
+            }, inserted));
+            case ENTRY -> {
+                String sec = AchFormat.trim(AchInsert.batchOf(doc, slot).getBatchHeader().getStandardEntryClassCode());
+                Dialogs.entry(stage, sec).ifPresent(detail -> commit("Inserted entry", () -> {
+                    AchInsert.insert(doc, slot, detail);
+                    AchBuilder.finish(doc);
+                }, inserted));
+            }
+            case ADDENDA -> {
+                TextInputDialog input = new TextInputDialog();
+                input.initOwner(stage);
+                input.setHeaderText("Payment-related information (addenda type 05), up to 80 characters.\nExample: INV 10045 PO 2231");
+                input.setContentText("Text:");
+                input.showAndWait().filter(s -> !s.isBlank()).ifPresent(text -> commit("Inserted addenda", () -> {
+                    AchInsert.insert(doc, slot, AchBuilder.newAddenda(text.trim()));
+                    AchBuilder.finish(doc);
+                }, inserted));
+            }
+        }
+    }
+
+    /** Inserts after the selection when possible, otherwise before it (toolbar and Edit menu). */
+    private void insertNearSelection(Kind kind) {
+        if (doc == null || !resolvePendingEdits()) {
+            return;
+        }
+        ACHRecord anchor = selected == null ? doc.getFileControl() : selected;
+        if (kind == Kind.ADDENDA && anchor instanceof EntryDetail) {
+            ACHBatchDetail d = detailOf(anchor);
+            if (d != null && !d.getAddendaRecords().isEmpty()) {
+                anchor = d.getAddendaRecords().get(d.getAddendaRecords().size() - 1);
+            }
+        }
+        if (kind == Kind.ENTRY && (anchor == doc.getFileHeader() || anchor == doc.getFileControl()) && doc.getBatches().size() == 1) {
+            anchor = doc.getBatches().get(0).getBatchControl();
+        }
+        Optional<Slot> slot = AchInsert.slot(doc, anchor, kind, Where.AFTER);
+        if (slot.isEmpty()) {
+            slot = AchInsert.slot(doc, anchor, kind, Where.BEFORE);
+        }
+        if (slot.isEmpty()) {
+            info(switch (kind) {
+                case ENTRY -> "Select a batch, entry or batch control first – the new entry goes next to it.";
+                case ADDENDA -> "Select an entry or addenda first.";
+                case BATCH -> "Select where the new batch should go.";
+            });
+            return;
+        }
+        String blocker = insertBlocker(slot.get());
+        if (blocker != null) {
+            info("Can't add here: " + blocker + ".");
+            return;
+        }
+        insert(slot.get(), batchTemplate(anchor));
     }
 
     // ---- file actions ----------------------------------------------------------------------
@@ -226,8 +473,7 @@ public class MainController {
         if (!confirmDiscard()) {
             return;
         }
-        FileChooser chooser = chooser("Open ACH file");
-        File f = chooser.showOpenDialog(stage);
+        File f = chooser("Open ACH file").showOpenDialog(stage);
         if (f != null) {
             open(f.toPath());
         }
@@ -250,14 +496,15 @@ public class MainController {
         dirty = path == null;
         undo.clear();
         selected = doc.getFileHeader();
+        recordPanel.show(null, "");
         refresh();
-        tabs.getSelectionModel().select(overviewTab);
+        tabs.getSelectionModel().select(0);
         status(status);
     }
 
     @FXML
     private void onSave() {
-        if (doc == null) {
+        if (doc == null || !resolvePendingEdits()) {
             return;
         }
         if (file == null) {
@@ -269,7 +516,7 @@ public class MainController {
 
     @FXML
     private void onSaveAs() {
-        if (doc == null) {
+        if (doc == null || !resolvePendingEdits()) {
             return;
         }
         FileChooser chooser = chooser("Save ACH file");
@@ -294,7 +541,7 @@ public class MainController {
                 return;
             }
             if (choice.get() == fix) {
-                mutate("Recalculated controls", () -> AchControls.recalculate(doc));
+                commit("Recalculated controls", () -> AchControls.recalculate(doc), null);
             }
         }
         try {
@@ -311,7 +558,7 @@ public class MainController {
 
     @FXML
     private void onSaveTemplate() {
-        if (doc == null) {
+        if (doc == null || !resolvePendingEdits()) {
             return;
         }
         TextInputDialog input = new TextInputDialog(file == null ? "My template" : file.getFileName().toString().replaceFirst("\\.[^.]*$", ""));
@@ -331,7 +578,7 @@ public class MainController {
 
     @FXML
     private void onExportReport() {
-        if (doc == null) {
+        if (doc == null || !resolvePendingEdits()) {
             return;
         }
         FileChooser chooser = new FileChooser();
@@ -362,11 +609,16 @@ public class MainController {
 
     @FXML
     private void onUndo() {
+        if (recordPanel.isDirty()) {
+            recordPanel.show(recordPanel.record(), describe(recordPanel.record()));
+            status("Unapplied field changes discarded.");
+            return;
+        }
         if (undo.isEmpty()) {
             status("Nothing to undo.");
             return;
         }
-        int index = selectedIndex();
+        int index = indexOf(selected);
         doc = service.read(undo.pop()).document();
         dirty = true;
         selected = recordAt(index);
@@ -376,80 +628,22 @@ public class MainController {
 
     @FXML
     private void onAddBatch() {
-        if (doc == null) {
-            return;
-        }
-        ACHBatch current = selectedBatch();
-        ACHBatch template = current != null ? current : doc.getBatches().isEmpty() ? null : doc.getBatches().get(doc.getBatches().size() - 1);
-        Dialogs.batch(stage, template == null ? null : template.getBatchHeader()).ifPresent(batch -> {
-            mutate("Added batch", () -> {
-                batch.setBatchControl(new BatchControl());
-                doc.addBatch(batch);
-                AchControls.recalculate(doc);
-            });
-            selected = doc.getBatches().get(doc.getBatches().size() - 1).getBatchHeader();
-            refresh();
-            tabs.getSelectionModel().select(recordTab);
-        });
+        insertNearSelection(Kind.BATCH);
     }
 
     @FXML
     private void onAddEntry() {
-        if (doc == null) {
-            return;
-        }
-        ACHBatch batch = selectedBatch();
-        if (batch == null) {
-            if (doc.getBatches().size() == 1) {
-                batch = doc.getBatches().get(0);
-            } else {
-                info("Select a batch (or an entry inside it) first, then add the entry.");
-                return;
-            }
-        }
-        String sec = AchFormat.trim(batch.getBatchHeader().getStandardEntryClassCode());
-        if (!AchBuilder.BUILDABLE_SEC.contains(sec)) {
-            info("Entries can be added from a form for PPD, CCD, WEB and TEL batches. This batch is " + sec
-                    + "; edit an existing entry's fields instead.");
-            return;
-        }
-        ACHBatch target = batch;
-        int batchIndex = doc.getBatches().indexOf(batch);
-        Dialogs.entry(stage, sec).ifPresent(detail -> {
-            mutate("Added entry", () -> {
-                target.addDetail(detail);
-                AchControls.renumberTraces(doc);
-                AchControls.recalculate(doc);
-            });
-            List<ACHBatchDetail> details = doc.getBatches().get(batchIndex).getDetails();
-            if (!details.isEmpty()) {
-                selected = details.get(details.size() - 1).getDetailRecord();
-                refresh();
-            }
-        });
+        insertNearSelection(Kind.ENTRY);
     }
 
     @FXML
     private void onAddAddenda() {
-        ACHBatchDetail detail = selectedDetail();
-        if (detail == null) {
-            info("Select an entry first.");
-            return;
-        }
-        TextInputDialog input = new TextInputDialog();
-        input.initOwner(stage);
-        input.setHeaderText("Payment-related information (addenda type 05), up to 80 characters.\nExample: INV 10045 PO 2231");
-        input.setContentText("Text:");
-        input.showAndWait().filter(s -> !s.isBlank()).ifPresent(text -> mutate("Added addenda", () -> {
-            detail.addAddendaRecord(AchBuilder.newAddenda(text.trim()));
-            AchControls.renumberTraces(doc);
-            AchControls.recalculate(doc);
-        }));
+        insertNearSelection(Kind.ADDENDA);
     }
 
     @FXML
     private void onDelete() {
-        if (doc == null || selected == null) {
+        if (doc == null || selected == null || !resolvePendingEdits()) {
             return;
         }
         String what = describe(selected);
@@ -457,15 +651,17 @@ public class MainController {
             info("The file header and file control can't be deleted.");
             return;
         }
-        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION, "Delete " + what + "?", ButtonType.OK, ButtonType.CANCEL);
+        boolean wholeBatch = selected instanceof BatchHeader || selected instanceof BatchControl;
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION, "Delete " + (wholeBatch ? "this whole batch" : what) + "?",
+                ButtonType.OK, ButtonType.CANCEL);
         confirm.initOwner(stage);
         confirm.setHeaderText(null);
         if (confirm.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) {
             return;
         }
         ACHRecord target = selected;
-        int index = selectedIndex();
-        mutate("Deleted " + what, () -> {
+        int index = indexOf(target);
+        commit("Deleted " + what, () -> {
             for (ACHBatch batch : new ArrayList<>(doc.getBatches())) {
                 if (batch.getBatchHeader() == target || batch.getBatchControl() == target) {
                     doc.getBatches().remove(batch);
@@ -474,45 +670,37 @@ public class MainController {
                 for (ACHBatchDetail d : new ArrayList<>(batch.getDetails())) {
                     if (d.getDetailRecord() == target) {
                         batch.getDetails().remove(d);
-                    } else if (d.getAddendaRecords().contains(target)) {
+                    } else {
                         d.getAddendaRecords().remove(target);
                     }
                 }
             }
-            AchControls.renumberTraces(doc);
-            AchControls.recalculate(doc);
-        });
-        selected = recordAt(Math.max(0, index - 1));
-        refresh();
+            AchBuilder.finish(doc);
+        }, () -> recordAt(Math.max(0, index - 1)));
     }
 
     @FXML
     private void onRecalculate() {
-        if (doc != null) {
-            mutate("Recalculated batch and file control totals", () -> AchControls.recalculate(doc));
+        if (doc != null && resolvePendingEdits()) {
+            commit("Recalculated batch and file control totals", () -> AchControls.recalculate(doc), null);
         }
     }
 
     @FXML
     private void onRenumber() {
-        if (doc != null) {
-            mutate("Renumbered trace numbers", () -> {
-                AchControls.renumberTraces(doc);
-                AchControls.recalculate(doc);
-            });
+        if (doc != null && resolvePendingEdits()) {
+            commit("Renumbered trace numbers", () -> AchBuilder.finish(doc), null);
         }
     }
 
-    /** Applies field edits made in the record form. */
-    void applyEdits(ACHRecord record, Map<FieldView, String> edits) {
+    /** Applies field edits from the record panel. Returns false if they were rejected. */
+    boolean applyEdits(ACHRecord record, Map<FieldView, String> edits) {
         if (edits.isEmpty()) {
-            select(record, false);
-            status("No changes – form reset to the record's current values.");
-            return;
+            recordPanel.show(record, describe(record));
+            return true;
         }
-        int index = selectedIndex();
         boolean isControl = record instanceof BatchControl || record instanceof FileControl;
-        mutate("Updated " + edits.size() + " field(s)", () -> {
+        return commit("Updated " + edits.size() + " field(s)", () -> {
             ACHRecord updated = record;
             for (Map.Entry<FieldView, String> edit : edits.entrySet()) {
                 FieldView current = service.fields(updated).stream()
@@ -523,17 +711,17 @@ public class MainController {
             if (!isControl) {
                 AchControls.recalculate(doc);
             }
-        });
-        selected = recordAt(index);
-        refresh();
+        }, null);
     }
 
     /**
-     * Runs a change against the document. The document is round-tripped through text so every
-     * record stays consistent; on failure the previous state is restored.
+     * Runs a change against the document, then round-trips it through text so every record stays
+     * consistent. On failure the previous state is restored. {@code nextSelection} (evaluated after
+     * the change) picks the record to show; null keeps the same position.
      */
-    private void mutate(String description, Runnable change) {
+    private boolean commit(String description, Runnable change, Supplier<ACHRecord> nextSelection) {
         String snapshot = service.write(doc, false);
+        int index = indexOf(selected);
         try {
             change.run();
             doc = service.normalise(doc);
@@ -542,73 +730,44 @@ public class MainController {
                 undo.removeLast();
             }
             dirty = true;
+            selected = nextSelection == null ? recordAt(index) : nextSelection.get();
+            recordPanel.show(null, "");
             refresh();
             status(description + ".");
+            return true;
         } catch (RuntimeException e) {
             doc = service.read(snapshot).document();
+            selected = recordAt(index);
             refresh();
             error("Change not applied", e);
-        }
-    }
-
-    // ---- selection & rendering ------------------------------------------------------------
-
-    void select(ACHRecord record, boolean showRecordTab) {
-        selected = record;
-        syncing = true;
-        try {
-            selectInTree(tree.getRoot(), record);
-            rawList.getSelectionModel().select(record);
-            rawList.scrollTo(Math.max(0, rawList.getSelectionModel().getSelectedIndex() - 3));
-        } finally {
-            syncing = false;
-        }
-        recordScroll.setContent(new RecordForm(service, record, describe(record), this::applyEdits).build());
-        if (showRecordTab) {
-            tabs.getSelectionModel().select(recordTab);
-        }
-    }
-
-    private boolean selectInTree(TreeItem<Node> item, ACHRecord record) {
-        if (item == null) {
             return false;
         }
-        if (item.getValue() != null && item.getValue().record() == record) {
-            tree.getSelectionModel().select(item);
-            int row = tree.getRow(item);
-            if (row >= 0) {
-                tree.scrollTo(Math.max(0, row - 3));
-            }
-            return true;
-        }
-        for (TreeItem<Node> child : item.getChildren()) {
-            if (selectInTree(child, record)) {
-                item.setExpanded(true);
-                return true;
-            }
-        }
-        return false;
     }
+
+    // ---- rendering ---------------------------------------------------------------------------
 
     private void refresh() {
         updateTitle();
+        formViewStale = true;
         if (doc == null) {
-            tree.setRoot(null);
             overviewScroll.setContent(OverviewView.empty());
-            recordScroll.setContent(null);
             rawList.getItems().clear();
             issuesList.getItems().clear();
+            formView.show(null);
             statusBadge.setText("");
             return;
         }
         List<AchValidator.Issue> issues = AchValidator.validate(doc);
         syncing = true;
         try {
-            tree.setRoot(buildTree());
             rawList.getItems().setAll(AchService.records(doc));
             issuesList.getItems().setAll(issues);
         } finally {
             syncing = false;
+        }
+        if (formView.isVisible()) {
+            formView.show(doc);
+            formViewStale = false;
         }
         long errors = issues.stream().filter(i -> i.severity() == AchValidator.Severity.ERROR).count();
         long warnings = issues.size() - errors;
@@ -625,60 +784,26 @@ public class MainController {
         }
         issuesTitle.setText(issues.isEmpty() ? "VALIDATION · no problems found" : "VALIDATION · " + issues.size() + " issue(s) – click to jump to the record");
 
-        overviewScroll.setContent(new OverviewView(service, doc, readNotes, issues, r -> select(r, true)).build());
+        overviewScroll.setContent(new OverviewView(service, doc, readNotes, issues, r -> requestSelect(r, true)).build());
         if (selected == null || !AchService.records(doc).contains(selected)) {
             selected = doc.getFileHeader();
         }
-        select(selected, false);
-    }
-
-    private TreeItem<Node> buildTree() {
-        TreeItem<Node> top = new TreeItem<>(new Node("root", null, "node-root"));
-        AchSummary.FileInfo info = AchSummary.file(doc);
-        TreeItem<Node> header = new TreeItem<>(new Node("File header · " + info.originName() + " → " + info.destinationName(),
-                doc.getFileHeader(), "node-file"));
-        top.getChildren().add(header);
-        for (ACHBatch batch : doc.getBatches()) {
-            AchSummary.BatchInfo b = AchSummary.batch(batch);
-            TreeItem<Node> bi = new TreeItem<>(new Node(b.title() + " · " + b.entries() + " entr" + (b.entries() == 1 ? "y" : "ies"),
-                    batch.getBatchHeader(), "node-batch"));
-            bi.setExpanded(true);
-            for (ACHBatchDetail d : batch.getDetails()) {
-                AchSummary.EntryInfo e = AchSummary.entry(service, d);
-                TreeItem<Node> ei = new TreeItem<>(new Node(e.direction() + " " + AchFormat.money(e.amount()) + " · " + e.name(),
-                        d.getDetailRecord(), e.direction().toLowerCase().contains("debit") ? "node-debit" : "node-credit"));
-                for (AddendaRecord a : d.getAddendaRecords()) {
-                    ei.getChildren().add(new TreeItem<>(new Node("Addenda " + a.getAddendaTypeCode() + " · " + AchSummary.addenda(a), a, "node-addenda")));
-                }
-                bi.getChildren().add(ei);
-            }
-            if (batch.getBatchControl() != null) {
-                bi.getChildren().add(new TreeItem<>(new Node("Batch control · credits " + AchFormat.money(b.credits())
-                        + " · debits " + AchFormat.money(b.debits()), batch.getBatchControl(), "node-control")));
-            }
-            top.getChildren().add(bi);
-        }
-        top.getChildren().add(new TreeItem<>(new Node("File control · " + info.batches() + " batch(es) · " + info.entries() + " entries",
-                doc.getFileControl(), "node-file")));
-        return top;
+        showRecord(selected, true);
     }
 
     private String describe(ACHRecord record) {
-        if (record == null) {
+        if (record == null || doc == null) {
             return "";
         }
-        if (record instanceof com.afrunt.jach.domain.EntryDetail) {
-            for (ACHBatch batch : doc.getBatches()) {
-                for (ACHBatchDetail d : batch.getDetails()) {
-                    if (d.getDetailRecord() == record) {
-                        AchSummary.EntryInfo e = AchSummary.entry(service, d);
-                        return e.direction() + " of " + AchFormat.money(e.amount()) + " · " + e.name() + " · "
-                                + e.accountType() + " account " + e.account() + " at routing " + e.routing();
-                    }
-                }
+        if (record instanceof EntryDetail) {
+            ACHBatchDetail d = detailOf(record);
+            if (d != null) {
+                AchSummary.EntryInfo e = AchSummary.entry(service, d);
+                return e.direction() + " of " + AchFormat.money(e.amount()) + " · " + e.name() + " · "
+                        + e.accountType() + " account " + e.account() + " at routing " + e.routing();
             }
         }
-        if (record instanceof com.afrunt.jach.domain.BatchHeader bh) {
+        if (record instanceof BatchHeader bh) {
             for (ACHBatch batch : doc.getBatches()) {
                 if (batch.getBatchHeader() == bh) {
                     AchSummary.BatchInfo b = AchSummary.batch(batch);
@@ -692,25 +817,10 @@ public class MainController {
         return AchService.recordTypeLabel(record);
     }
 
-    private ACHBatch selectedBatch() {
-        if (doc == null || selected == null) {
-            return null;
-        }
-        for (ACHBatch batch : doc.getBatches()) {
-            if (AchService.records(batch).contains(selected)) {
-                return batch;
-            }
-        }
-        return null;
-    }
-
-    private ACHBatchDetail selectedDetail() {
-        if (doc == null || selected == null) {
-            return null;
-        }
+    private ACHBatchDetail detailOf(ACHRecord record) {
         for (ACHBatch batch : doc.getBatches()) {
             for (ACHBatchDetail d : batch.getDetails()) {
-                if (d.getDetailRecord() == selected || d.getAddendaRecords().contains(selected)) {
+                if (d.getDetailRecord() == record || d.getAddendaRecords().contains(record)) {
                     return d;
                 }
             }
@@ -718,8 +828,8 @@ public class MainController {
         return null;
     }
 
-    private int selectedIndex() {
-        return doc == null ? 0 : Math.max(0, AchService.records(doc).indexOf(selected));
+    private int indexOf(ACHRecord record) {
+        return doc == null ? 0 : Math.max(0, AchService.records(doc).indexOf(record));
     }
 
     private ACHRecord recordAt(int index) {
@@ -740,6 +850,9 @@ public class MainController {
     }
 
     private boolean confirmDiscard() {
+        if (!resolvePendingEdits()) {
+            return false;
+        }
         if (doc == null || !dirty) {
             return true;
         }

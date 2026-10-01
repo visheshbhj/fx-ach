@@ -27,14 +27,6 @@
 .badge-warn { -fx-background-color: #fff3cd; -fx-text-fill: #8a5a00; }
 .badge-error { -fx-background-color: #fde2e1; -fx-text-fill: -debit; }
 
-/* tree */
-.node-batch { -fx-font-weight: bold; }
-.node-credit .text { -fx-fill: -credit; }
-.node-debit .text { -fx-fill: -debit; }
-.node-control, .node-addenda { -fx-text-fill: -muted; }
-.node-control .text, .node-addenda .text { -fx-fill: -muted; }
-.tree-cell:selected .text { -fx-fill: white; }
-
 /* overview cards */
 .card {
     -fx-background-color: white;
@@ -50,29 +42,46 @@
 .entries .table-cell.debit { -fx-text-fill: -debit; }
 .entries .table-row-cell:selected .table-cell { -fx-text-fill: white; }
 
-/* record form */
-.grid-header { -fx-font-size: 10px; -fx-font-weight: bold; -fx-text-fill: -muted; }
+/* record panel (right) */
+.record-panel { -fx-background-color: #fbfcfd; }
+.record-panel-head { -fx-background-color: #f1f4f8; -fx-border-color: #d8dee6; -fx-border-width: 0 0 1 0; }
+.pane-title-inline { -fx-font-size: 11px; -fx-font-weight: bold; -fx-text-fill: -muted; }
+.unsaved { -fx-text-fill: #b45309; -fx-font-weight: bold; }
+.field-box { -fx-padding: 0 0 4 0; }
 .field-name { -fx-font-weight: bold; }
 .field-pos { -fx-font-size: 11px; -fx-text-fill: -muted; }
-.field-meaning { -fx-text-fill: #1d2433; }
+.field-meaning { -fx-text-fill: #34404f; -fx-font-size: 12px; }
 .field-bad { -fx-text-fill: -debit; -fx-font-weight: bold; }
-.mono, .seg, .raw-list .list-cell, .ruler { -fx-font-family: "Monospaced"; }
-.text-field.read-only { -fx-background-color: #f1f3f6; -fx-text-fill: -muted; }
-.raw-strip { -fx-padding: 4; -fx-background-color: #f7f8fa; -fx-border-color: #d8dee6; -fx-border-radius: 4; }
-.seg { -fx-padding: 2 0; -fx-cursor: hand; }
-.seg-a { -fx-background-color: #dbe7ff; }
-.seg-b { -fx-background-color: #fde9c9; }
-.seg:hover { -fx-background-color: #2457c5; -fx-text-fill: white; }
+.swatch { -fx-min-width: 11; -fx-min-height: 11; -fx-max-width: 11; -fx-max-height: 11;
+          -fx-background-radius: 3; -fx-border-color: rgba(0,0,0,0.18); -fx-border-radius: 3; }
+.mono, .seg, .line-number, .ruler { -fx-font-family: "Monospaced"; }
+.text-field.read-only { -fx-background-color: #eef1f5; -fx-text-fill: -muted; }
 .button.accent { -fx-base: -accent; -fx-text-fill: white; -fx-font-weight: bold; }
 
-/* raw file view: colour by record type */
+/* raw view: each field its own colour */
+.seg { -fx-padding: 1 0; -fx-font-size: 12px; -fx-text-fill: #1d2433; }
+.seg:hover { -fx-background-color: #2457c5 !important; -fx-text-fill: white; }
+.line-number { -fx-font-size: 12px; -fx-text-fill: -muted; }
+.line-number.rt-1, .line-number.rt-9 { -fx-text-fill: #6b3fa0; -fx-font-weight: bold; }
+.line-number.rt-5, .line-number.rt-8 { -fx-text-fill: #2457c5; -fx-font-weight: bold; }
+.line-number.rt-7 { -fx-text-fill: #8a5a00; }
+.raw-list .list-cell { -fx-padding: 1 0 1 8; -fx-background-color: white; }
+.raw-list .list-cell:filled:selected { -fx-background-color: #2457c5; }
+.raw-list .list-cell:filled:selected .line-number { -fx-text-fill: white; }
+
+/* not raw mode: collapsible forms */
+.form-view { -fx-background-color: #f4f6f9; }
+.form-view .titled-pane > .title { -fx-font-weight: normal; }
+.titled-pane.pane-batch > .title { -fx-font-weight: bold; -fx-font-size: 14px; }
+.titled-pane.pane-credit > .title > .text { -fx-fill: -credit; }
+.titled-pane.pane-debit > .title > .text { -fx-fill: -debit; }
+.titled-pane.pane-control > .title > .text, .titled-pane.pane-header > .title > .text { -fx-fill: #2457c5; }
+.titled-pane.pane-addenda > .title > .text { -fx-fill: #8a5a00; }
+.titled-pane.pane-file > .title > .text { -fx-fill: #6b3fa0; }
+.titled-pane.record-selected > .title { -fx-background-color: #cfe0ff; -fx-border-color: #2457c5; -fx-border-width: 0 0 0 4; }
+.mini-grid { -fx-padding: 4 4 6 4; }
+
 .ruler { -fx-text-fill: -muted; -fx-padding: 4 0 2 8; -fx-font-size: 12px; }
-.raw-list .list-cell { -fx-font-size: 12px; -fx-padding: 2 0 2 8; }
-.raw-list .list-cell.rt-1, .raw-list .list-cell.rt-9 { -fx-text-fill: #6b3fa0; }
-.raw-list .list-cell.rt-5, .raw-list .list-cell.rt-8 { -fx-text-fill: #2457c5; }
-.raw-list .list-cell.rt-6 { -fx-text-fill: #1d2433; }
-.raw-list .list-cell.rt-7 { -fx-text-fill: #8a5a00; }
-.raw-list .list-cell:selected { -fx-text-fill: white; }
 
 /* validation */
 .issue-error { -fx-text-fill: -debit; }

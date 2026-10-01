@@ -57,30 +57,32 @@
                     <tooltip><Tooltip text="Recompute batch and file control records (counts, hashes, totals)"/></tooltip>
                 </Button>
                 <Button text="Report" onAction="#onExportReport"/>
+                <Separator/>
+                <ToggleButton fx:id="notRawToggle" text="Not raw mode">
+                    <tooltip><Tooltip text="Show the file as collapsible forms instead of raw 94-character lines"/></tooltip>
+                </ToggleButton>
+                <ToggleButton fx:id="editModeToggle" text="Edit mode">
+                    <tooltip><Tooltip text="Apply field changes automatically when moving to another record, without asking"/></tooltip>
+                </ToggleButton>
                 <Pane HBox.hgrow="ALWAYS"/>
                 <Label fx:id="statusBadge" styleClass="badge"/>
             </ToolBar>
         </VBox>
     </top>
     <center>
-        <SplitPane dividerPositions="0.27">
-            <VBox>
-                <Label text="STRUCTURE" styleClass="pane-title"/>
-                <TreeView fx:id="tree" showRoot="false" VBox.vgrow="ALWAYS"/>
-            </VBox>
+        <SplitPane fx:id="mainSplit" dividerPositions="0.66">
             <SplitPane orientation="VERTICAL" dividerPositions="0.8">
                 <TabPane fx:id="tabs" tabClosingPolicy="UNAVAILABLE">
-                    <Tab fx:id="overviewTab" text="Overview">
+                    <Tab fx:id="fileTab" text="File">
+                        <StackPane fx:id="fileStack">
+                            <VBox fx:id="rawPane">
+                                <Label fx:id="ruler" styleClass="ruler"/>
+                                <ListView fx:id="rawList" styleClass="raw-list" VBox.vgrow="ALWAYS"/>
+                            </VBox>
+                        </StackPane>
+                    </Tab>
+                    <Tab fx:id="summaryTab" text="Summary">
                         <ScrollPane fx:id="overviewScroll" fitToWidth="true"/>
-                    </Tab>
-                    <Tab fx:id="recordTab" text="Record">
-                        <ScrollPane fx:id="recordScroll" fitToWidth="true"/>
-                    </Tab>
-                    <Tab fx:id="rawTab" text="Raw File">
-                        <VBox>
-                            <Label fx:id="ruler" styleClass="ruler"/>
-                            <ListView fx:id="rawList" styleClass="raw-list" VBox.vgrow="ALWAYS"/>
-                        </VBox>
                     </Tab>
                 </TabPane>
                 <VBox>
@@ -93,7 +95,7 @@
     <bottom>
         <HBox styleClass="status-bar">
             <padding><Insets top="3" right="10" bottom="3" left="10"/></padding>
-            <Label fx:id="statusLabel" text="Open an ACH file or start a new one from a template."/>
+            <Label fx:id="statusLabel" text="Open an ACH file or start a new one from a template. Right-click a record to insert before/after it."/>
         </HBox>
     </bottom>
 </BorderPane>
