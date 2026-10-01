@@ -23,6 +23,9 @@
                         <accelerator><KeyCodeCombination code="S" control="UP" shift="DOWN" alt="UP" meta="UP" shortcut="DOWN"/></accelerator>
                     </MenuItem>
                     <MenuItem text="Save as _Template…" onAction="#onSaveTemplate"/>
+                    <MenuItem text="_Close Tab" onAction="#onCloseTab">
+                        <accelerator><KeyCodeCombination code="W" control="UP" shift="UP" alt="UP" meta="UP" shortcut="DOWN"/></accelerator>
+                    </MenuItem>
                     <MenuItem text="_Export Readable Report (HTML)…" onAction="#onExportReport"/>
                     <SeparatorMenuItem/>
                     <MenuItem text="E_xit" onAction="#onExit"/>
@@ -73,19 +76,11 @@
     <center>
         <SplitPane fx:id="mainSplit" dividerPositions="0.66">
             <SplitPane orientation="VERTICAL" dividerPositions="0.8">
-                <TabPane fx:id="tabs" tabClosingPolicy="UNAVAILABLE">
-                    <Tab fx:id="fileTab" text="File">
-                        <StackPane fx:id="fileStack">
-                            <VBox fx:id="rawPane">
-                                <HBox fx:id="ruler" styleClass="ruler"/>
-                                <ListView fx:id="rawList" styleClass="raw-list" VBox.vgrow="ALWAYS"/>
-                            </VBox>
-                        </StackPane>
-                    </Tab>
-                    <Tab fx:id="summaryTab" text="Summary">
-                        <ScrollPane fx:id="overviewScroll" fitToWidth="true"/>
-                    </Tab>
-                </TabPane>
+                <StackPane>
+                    <Label fx:id="emptyPlaceholder" styleClass="empty-placeholder" wrapText="true"
+                           text="No file open.&#10;&#10;File ▸ Open… (or drag ACH files onto this window) – each file opens in its own tab.&#10;File ▸ New from template / New from Pasted Text to build one."/>
+                    <TabPane fx:id="tabs" tabClosingPolicy="ALL_TABS"/>
+                </StackPane>
                 <VBox>
                     <Label fx:id="issuesTitle" text="VALIDATION" styleClass="pane-title"/>
                     <ListView fx:id="issuesList" VBox.vgrow="ALWAYS"/>

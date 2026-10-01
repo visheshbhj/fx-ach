@@ -21,8 +21,6 @@ public class AchApplication extends Application {
         stage.show();
 
         List<String> args = getParameters().getUnnamed();
-        if (!args.isEmpty()) {
-            controller.open(Path.of(args.get(0)));
-        }
+        args.forEach(arg -> controller.open(Path.of(arg)));
     }
 }

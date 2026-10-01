@@ -37,9 +37,9 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuButton;
 import javafx.scene.control.MenuItem;
-import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.SplitPane;
+import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
 import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.ToggleButton;
@@ -77,27 +77,83 @@ public class MainController {
     @FXML private ToggleButton editModeToggle;
     @FXML private SplitPane mainSplit;
     @FXML private TabPane tabs;
-    @FXML private StackPane fileStack;
-    @FXML private VBox rawPane;
-    @FXML private ScrollPane overviewScroll;
-    @FXML private ListView<ACHRecord> rawList;
-    @FXML private HBox ruler;
+    @FXML private Label emptyPlaceholder;
     @FXML private ListView<AchValidator.Issue> issuesList;
     @FXML private Label issuesTitle;
     @FXML private Label statusLabel;
 
     private final AchService service = new AchService();
-    private final Deque<String> undo = new ArrayDeque<>();
     private RecordPanel recordPanel;
-    private FormView formView;
-    private boolean formViewStale = true;
     private Stage stage;
+    private boolean syncing;
+    private boolean switchingTabs;
+
+    /**
+     * One open file: its document state plus its own raw and present-mode views. The fields below
+     * (doc, file, dirty, …) always hold the active session's state; they are swapped on tab change.
+     */
+    private final class Session {
+        final Tab tab = new Tab();
+        final ListView<ACHRecord> rawList = new ListView<>();
+        final VBox rawPane;
+        final FormView formView;
+        final Deque<String> undo = new ArrayDeque<>();
+        ACHDocument doc;
+        Path file;
+        boolean dirty;
+        boolean formViewStale = true;
+        boolean closed;
+        ACHRecord selected;
+
+        Session() {
+            HBox ruler = new HBox();
+            ruler.getStyleClass().add("ruler");
+            buildRuler(ruler);
+            rawList.getStyleClass().add("raw-list");
+            rawList.setCellFactory(l -> new RawCell());
+            rawList.getSelectionModel().selectedItemProperty().addListener((o, previous, r) -> {
+                if (!syncing && r != null && r != selected && !requestSelect(r, false)) {
+                    syncing = true;
+                    rawList.getSelectionModel().select(selected);
+                    syncing = false;
+                }
+            });
+            rawList.setOnKeyPressed(e -> {
+                if (e.getCode() == KeyCode.DELETE) {
+                    onDelete();
+                }
+            });
+            VBox.setVgrow(rawList, javafx.scene.layout.Priority.ALWAYS);
+            rawPane = new VBox(ruler, rawList);
+            formView = new FormView(service, r -> requestSelect(r, false), MainController.this::contextMenu);
+            formView.setVisible(false);
+            tab.setContent(new StackPane(rawPane, formView));
+            tab.setUserData(this);
+            tab.setOnCloseRequest(e -> {
+                if (!close(this)) {
+                    e.consume();
+                }
+            });
+        }
+
+        void updateTab() {
+            String name = file == null ? "Untitled" : file.getFileName().toString();
+            tab.setText(name + (dirty ? " *" : ""));
+            tab.setTooltip(new Tooltip(file == null ? "Not saved yet" : file.toString()));
+        }
+    }
+
+    // state of the active session (see Session)
+    private Session current;
     private ACHDocument doc;
     private Path file;
     private boolean dirty;
-    private List<String> readNotes = List.of();
     private ACHRecord selected;
-    private boolean syncing;
+    private Deque<String> undo = new ArrayDeque<>();
+    private ListView<ACHRecord> rawList;
+    private VBox rawPane;
+    private FormView formView;
+    private boolean formViewStale = true;
 
     void init(Stage stage) {
         this.stage = stage;
@@ -109,16 +165,26 @@ public class MainController {
         mainSplit.setDividerPositions(0.66);
         SplitPane.setResizableWithParent(recordPanel, false);
 
-        formView = new FormView(service, r -> requestSelect(r, false), this::contextMenu);
-        formView.setVisible(false);
-        fileStack.getChildren().add(formView);
-        presentToggle.selectedProperty().addListener((o, was, present) -> {
-            rawPane.setVisible(!present);
-            formView.setVisible(present);
-            if (present && formViewStale) {
-                formView.show(doc);
-                formViewStale = false;
+        emptyPlaceholder.visibleProperty().bind(javafx.beans.binding.Bindings.isEmpty(tabs.getTabs()));
+        tabs.visibleProperty().bind(emptyPlaceholder.visibleProperty().not());
+        tabs.getSelectionModel().selectedItemProperty().addListener((o, oldTab, newTab) -> {
+            if (switchingTabs) {
+                return;
             }
+            Session from = oldTab == null ? null : (Session) oldTab.getUserData();
+            if (from != null && !from.closed && from == current && !resolvePendingEdits()) {
+                switchingTabs = true;
+                tabs.getSelectionModel().select(oldTab); // stay on the tab with unapplied edits
+                switchingTabs = false;
+                return;
+            }
+            activate(newTab == null ? null : (Session) newTab.getUserData());
+        });
+        presentToggle.selectedProperty().addListener((o, was, present) -> {
+            if (current == null) {
+                return;
+            }
+            applyPresentMode();
             if (selected != null) {
                 showRecord(selected, true);
             }
@@ -129,20 +195,6 @@ public class MainController {
                     : "Edit mode off: you'll be asked before unapplied changes are lost.");
         });
 
-        rawList.setCellFactory(l -> new RawCell());
-        rawList.getSelectionModel().selectedItemProperty().addListener((o, previous, r) -> {
-            if (!syncing && r != null && r != selected && !requestSelect(r, false)) {
-                syncing = true;
-                rawList.getSelectionModel().select(selected);
-                syncing = false;
-            }
-        });
-        rawList.setOnKeyPressed(e -> {
-            if (e.getCode() == KeyCode.DELETE) {
-                onDelete();
-            }
-        });
-        buildRuler();
 
         issuesList.setCellFactory(l -> new ListCell<>() {
             @Override
@@ -160,7 +212,6 @@ public class MainController {
         issuesList.setOnMouseClicked(e -> {
             AchValidator.Issue issue = issuesList.getSelectionModel().getSelectedItem();
             if (issue != null && issue.record() != null) {
-                tabs.getSelectionModel().select(0);
                 requestSelect(issue.record(), true);
             }
         });
@@ -172,19 +223,131 @@ public class MainController {
             e.consume();
         });
         root.setOnDragDropped(e -> {
-            List<File> files = e.getDragboard().getFiles();
-            if (!files.isEmpty() && confirmDiscard()) {
-                open(files.get(0).toPath());
+            for (File f : e.getDragboard().getFiles()) {
+                open(f.toPath());
             }
             e.setDropCompleted(true);
             e.consume();
         });
         stage.setOnCloseRequest(e -> {
-            if (!confirmDiscard()) {
+            if (!closeAll()) {
                 e.consume();
             }
         });
         refresh();
+    }
+
+    // ---- tabs / sessions ---------------------------------------------------------------------
+
+    /** Opens a document in a new tab and makes it active. */
+    private void openInNewTab(ACHDocument document, Path path, List<String> notes, String status) {
+        Session s = new Session();
+        s.doc = document;
+        s.file = path;
+        s.dirty = path == null;
+        s.selected = document.getFileHeader();
+        s.updateTab();
+        tabs.getTabs().add(s.tab);
+        tabs.getSelectionModel().select(s.tab);
+        if (current != s) {
+            // the user kept unapplied edits on the previous tab
+            s.closed = true;
+            tabs.getTabs().remove(s.tab);
+            return;
+        }
+        status(notes.isEmpty() ? status : status + "  Note: " + String.join(" ", notes));
+    }
+
+    /** Saves the active state back into its session. */
+    private void stash() {
+        if (current != null) {
+            current.doc = doc;
+            current.file = file;
+            current.dirty = dirty;
+            current.selected = selected;
+            current.formViewStale = formViewStale;
+            current.updateTab();
+        }
+    }
+
+    private void activate(Session s) {
+        stash();
+        current = s;
+        recordPanel.show(null, "");
+        if (s == null) {
+            doc = null;
+            file = null;
+            dirty = false;
+            selected = null;
+            undo = new ArrayDeque<>();
+        } else {
+            doc = s.doc;
+            file = s.file;
+            dirty = s.dirty;
+            selected = s.selected;
+            undo = s.undo;
+            rawList = s.rawList;
+            rawPane = s.rawPane;
+            formView = s.formView;
+            formViewStale = s.formViewStale;
+            applyPresentMode();
+        }
+        refresh();
+    }
+
+    private void applyPresentMode() {
+        boolean present = presentToggle.isSelected();
+        rawPane.setVisible(!present);
+        formView.setVisible(present);
+        if (present && formViewStale) {
+            formView.show(doc);
+            formViewStale = false;
+        }
+    }
+
+    /** Closes a tab after dealing with unapplied/unsaved changes. Returns false if the user cancelled. */
+    private boolean close(Session s) {
+        if (s != current) {
+            tabs.getSelectionModel().select(s.tab);
+            if (s != current) {
+                return false;
+            }
+        }
+        if (!confirmDiscard()) {
+            return false;
+        }
+        s.closed = true;
+        recordPanel.show(null, "");
+        return true;
+    }
+
+    private boolean closeAll() {
+        for (Tab t : new ArrayList<>(tabs.getTabs())) {
+            Session s = (Session) t.getUserData();
+            if (!close(s)) {
+                return false;
+            }
+            tabs.getTabs().remove(t);
+        }
+        return true;
+    }
+
+    @FXML
+    private void onCloseTab() {
+        if (current != null && close(current)) {
+            tabs.getTabs().remove(current.tab);
+        }
+    }
+
+    private Session sessionFor(Path path) {
+        for (Tab t : tabs.getTabs()) {
+            Session s = (Session) t.getUserData();
+            Path p = s == current ? file : s.file;
+            if (p != null && p.toAbsolutePath().normalize().equals(path.toAbsolutePath().normalize())) {
+                return s;
+            }
+        }
+        return null;
     }
 
     // ---- raw view ----------------------------------------------------------------------------
@@ -478,21 +641,15 @@ public class MainController {
     }
 
     private void newFromTemplate(AchTemplates.BuiltIn template) {
-        if (!confirmDiscard()) {
-            return;
-        }
-        Dialogs.newFile(stage, template).ifPresent(created -> load(service.normalise(created), null, List.of(),
+        Dialogs.newFile(stage, template).ifPresent(created -> openInNewTab(service.normalise(created), null, List.of(),
                 "New file from template \"" + template.title + "\". Edit entries, then Save."));
     }
 
     private void newFromUserTemplate(Path template) {
-        if (!confirmDiscard()) {
-            return;
-        }
         Dialogs.userTemplate(stage, template).ifPresent(opts -> {
             try {
                 ACHDocument created = AchTemplates.instantiate(service, template, opts.effectiveDate(), opts.clearAmounts());
-                load(service.normalise(created), null, List.of(), "New file from template " + template.getFileName() + ".");
+                openInNewTab(service.normalise(created), null, List.of(), "New file from template " + template.getFileName() + ".");
             } catch (IOException | AchException e) {
                 error("Could not use template", e);
             }
@@ -501,13 +658,10 @@ public class MainController {
 
     @FXML
     private void onNewFromPaste() {
-        if (!confirmDiscard()) {
-            return;
-        }
         Dialogs.pastedFile(stage).ifPresent(text -> {
             try {
                 AchService.ReadResult result = service.read(text);
-                load(result.document(), null, result.notes(), "New file from pasted text.");
+                openInNewTab(result.document(), null, result.notes(), "New file from pasted text.");
             } catch (AchException e) {
                 error("Could not read the pasted text", e);
             }
@@ -516,36 +670,27 @@ public class MainController {
 
     @FXML
     private void onOpen() {
-        if (!confirmDiscard()) {
-            return;
-        }
-        File f = chooser("Open ACH file").showOpenDialog(stage);
-        if (f != null) {
-            open(f.toPath());
+        List<File> files = chooser("Open ACH file(s)").showOpenMultipleDialog(stage);
+        if (files != null) {
+            files.forEach(f -> open(f.toPath()));
         }
     }
 
+    /** Opens a file in its own tab, or switches to it if it is already open. */
     void open(Path path) {
+        Session existing = sessionFor(path);
+        if (existing != null) {
+            tabs.getSelectionModel().select(existing.tab);
+            status(path.getFileName() + " is already open.");
+            return;
+        }
         try {
             AchService.ReadResult result = service.read(path);
-            load(result.document(), path, result.notes(), "Opened " + path.getFileName() + ".");
+            openInNewTab(result.document(), path, result.notes(), "Opened " + path.getFileName() + ".");
             Prefs.setLastDir(path.getParent());
         } catch (IOException | AchException e) {
             error("Could not read " + path.getFileName(), e);
         }
-    }
-
-    private void load(ACHDocument document, Path path, List<String> notes, String status) {
-        doc = document;
-        file = path;
-        readNotes = notes;
-        dirty = path == null;
-        undo.clear();
-        selected = doc.getFileHeader();
-        recordPanel.show(null, "");
-        refresh();
-        tabs.getSelectionModel().select(0);
-        status(status);
     }
 
     @FXML
@@ -595,6 +740,7 @@ public class MainController {
             file = target;
             dirty = false;
             Prefs.setLastDir(target.getParent());
+            stash();
             updateTitle();
             status("Saved " + target + ".");
         } catch (IOException | AchException e) {
@@ -646,7 +792,7 @@ public class MainController {
 
     @FXML
     private void onExit() {
-        if (confirmDiscard()) {
+        if (closeAll()) {
             Platform.exit();
         }
     }
@@ -795,14 +941,15 @@ public class MainController {
     // ---- rendering ---------------------------------------------------------------------------
 
     private void refresh() {
-        updateTitle();
         formViewStale = true;
+        stash();
+        updateTitle();
         if (doc == null) {
-            overviewScroll.setContent(OverviewView.empty());
-            rawList.getItems().clear();
             issuesList.getItems().clear();
-            formView.show(null);
+            issuesTitle.setText("VALIDATION");
             statusBadge.setText("");
+            statusBadge.getStyleClass().removeAll("badge-ok", "badge-error", "badge-warn");
+            recordPanel.show(null, "");
             return;
         }
         List<AchValidator.Issue> issues = AchValidator.validate(doc);
@@ -832,7 +979,6 @@ public class MainController {
         }
         issuesTitle.setText(issues.isEmpty() ? "VALIDATION · no problems found" : "VALIDATION · " + issues.size() + " issue(s) – click to jump to the record");
 
-        overviewScroll.setContent(new OverviewView(service, doc, readNotes, issues, r -> requestSelect(r, true)).build());
         if (selected == null || !AchService.records(doc).contains(selected)) {
             selected = doc.getFileHeader();
         }
@@ -904,7 +1050,8 @@ public class MainController {
         if (doc == null || !dirty) {
             return true;
         }
-        Alert alert = new Alert(Alert.AlertType.CONFIRMATION, "You have unsaved changes. Discard them?",
+        String name = file == null ? "This new file" : file.getFileName().toString();
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION, name + " has unsaved changes. Discard them?",
                 ButtonType.YES, ButtonType.NO);
         alert.initOwner(stage);
         alert.setHeaderText(null);
@@ -914,6 +1061,9 @@ public class MainController {
     private void updateTitle() {
         String name = doc == null ? "" : " — " + (file == null ? "Untitled" : file.getFileName()) + (dirty ? " *" : "");
         stage.setTitle("ACH Studio" + name);
+        if (current != null) {
+            current.updateTab();
+        }
     }
 
     private void status(String message) {
@@ -942,7 +1092,7 @@ public class MainController {
     };
 
     /** Column ruler above the raw lines, colour-coded in blocks of ten columns (1–10, 11–20, …). */
-    private void buildRuler() {
+    private static void buildRuler(HBox ruler) {
         Label gutter = new Label("      \n      ");
         gutter.getStyleClass().add("ruler-block");
         ruler.getChildren().setAll(gutter);

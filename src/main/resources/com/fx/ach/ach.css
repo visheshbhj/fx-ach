@@ -97,3 +97,6 @@
 .form-error { -fx-text-fill: -debit; -fx-font-weight: bold; }
 .preview { -fx-font-weight: bold; -fx-text-fill: -accent; }
 .raw-section .text-area { -fx-font-size: 12px; }
+
+/* document tabs */
+.empty-placeholder { -fx-text-fill: -muted; -fx-font-size: 15px; -fx-padding: 40; -fx-text-alignment: center; }
