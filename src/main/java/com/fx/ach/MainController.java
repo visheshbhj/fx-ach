@@ -43,10 +43,12 @@ import javafx.scene.control.SplitPane;
 import javafx.scene.control.TabPane;
 import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.ToggleButton;
+import javafx.scene.control.Tooltip;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.TransferMode;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
@@ -71,7 +73,7 @@ public class MainController {
     @FXML private Menu newMenu;
     @FXML private MenuButton newButton;
     @FXML private Label statusBadge;
-    @FXML private ToggleButton notRawToggle;
+    @FXML private ToggleButton presentToggle;
     @FXML private ToggleButton editModeToggle;
     @FXML private SplitPane mainSplit;
     @FXML private TabPane tabs;
@@ -79,7 +81,7 @@ public class MainController {
     @FXML private VBox rawPane;
     @FXML private ScrollPane overviewScroll;
     @FXML private ListView<ACHRecord> rawList;
-    @FXML private Label ruler;
+    @FXML private HBox ruler;
     @FXML private ListView<AchValidator.Issue> issuesList;
     @FXML private Label issuesTitle;
     @FXML private Label statusLabel;
@@ -110,10 +112,10 @@ public class MainController {
         formView = new FormView(service, r -> requestSelect(r, false), this::contextMenu);
         formView.setVisible(false);
         fileStack.getChildren().add(formView);
-        notRawToggle.selectedProperty().addListener((o, was, notRaw) -> {
-            rawPane.setVisible(!notRaw);
-            formView.setVisible(notRaw);
-            if (notRaw && formViewStale) {
+        presentToggle.selectedProperty().addListener((o, was, present) -> {
+            rawPane.setVisible(!present);
+            formView.setVisible(present);
+            if (present && formViewStale) {
                 formView.show(doc);
                 formViewStale = false;
             }
@@ -140,7 +142,7 @@ public class MainController {
                 onDelete();
             }
         });
-        ruler.setText(rulerText());
+        buildRuler();
 
         issuesList.setCellFactory(l -> new ListCell<>() {
             @Override
@@ -934,13 +936,32 @@ public class MainController {
         status(title + ": " + e.getMessage());
     }
 
-    private static String rulerText() {
-        StringBuilder tens = new StringBuilder("      ");
-        StringBuilder units = new StringBuilder("      ");
-        for (int i = 1; i <= AchService.RECORD_LENGTH; i++) {
-            tens.append(i % 10 == 0 ? String.valueOf((i / 10) % 10) : " ");
-            units.append(i % 10);
+    /** Text colours for the column ruler, one per block of ten columns. */
+    private static final String[] RULER_COLORS = {
+            "#2457c5", "#0f7b78", "#1a7f37", "#6f7a12", "#b35c00", "#b42318", "#a3238e", "#6b3fa0", "#3f51b5", "#7a4b2a"
+    };
+
+    /** Column ruler above the raw lines, colour-coded in blocks of ten columns (1–10, 11–20, …). */
+    private void buildRuler() {
+        Label gutter = new Label("      \n      ");
+        gutter.getStyleClass().add("ruler-block");
+        ruler.getChildren().setAll(gutter);
+        for (int start = 1; start <= AchService.RECORD_LENGTH; start += 10) {
+            int end = Math.min(start + 9, AchService.RECORD_LENGTH);
+            // top row labels the block with its first column; bottom row counts 1..0 within it
+            String label = String.valueOf(start);
+            StringBuilder units = new StringBuilder();
+            for (int i = start; i <= end; i++) {
+                units.append(i % 10);
+            }
+            String top = label + " ".repeat(units.length() - label.length());
+            Label block = new Label(top + "\n" + units);
+            int n = (start - 1) / 10;
+            block.getStyleClass().addAll("ruler-block", n % 2 == 0 ? "ruler-even" : "ruler-odd");
+            block.setStyle("-fx-text-fill: " + RULER_COLORS[n % RULER_COLORS.length] + ";");
+            block.setMinWidth(Region.USE_PREF_SIZE);
+            block.setTooltip(new Tooltip("Columns " + start + "–" + end));
+            ruler.getChildren().add(block);
         }
-        return tens + "\n" + units;
     }
 }

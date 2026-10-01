@@ -54,7 +54,7 @@
 .field-bad { -fx-text-fill: -debit; -fx-font-weight: bold; }
 .swatch { -fx-min-width: 11; -fx-min-height: 11; -fx-max-width: 11; -fx-max-height: 11;
           -fx-background-radius: 3; -fx-border-color: rgba(0,0,0,0.18); -fx-border-radius: 3; }
-.mono, .seg, .line-number, .ruler { -fx-font-family: "Monospaced"; }
+.mono, .seg, .line-number, .ruler-block { -fx-font-family: "Monospaced"; }
 .text-field.read-only { -fx-background-color: #eef1f5; -fx-text-fill: -muted; }
 .button.accent { -fx-base: -accent; -fx-text-fill: white; -fx-font-weight: bold; }
 
@@ -69,7 +69,7 @@
 .raw-list .list-cell:filled:selected { -fx-background-color: #2457c5; }
 .raw-list .list-cell:filled:selected .line-number { -fx-text-fill: white; }
 
-/* not raw mode: collapsible forms */
+/* present mode: collapsible forms */
 .form-view { -fx-background-color: #f4f6f9; }
 .form-view .titled-pane > .title { -fx-font-weight: normal; }
 .titled-pane.pane-batch > .title { -fx-font-weight: bold; -fx-font-size: 14px; }
@@ -81,7 +81,10 @@
 .titled-pane.record-selected > .title { -fx-background-color: #cfe0ff; -fx-border-color: #2457c5; -fx-border-width: 0 0 0 4; }
 .mini-grid { -fx-padding: 4 4 6 4; }
 
-.ruler { -fx-text-fill: -muted; -fx-padding: 4 0 2 8; -fx-font-size: 12px; }
+.ruler { -fx-padding: 4 0 2 8; }
+.ruler-block { -fx-font-size: 12px; -fx-font-weight: bold; -fx-padding: 0; }
+.ruler-even { -fx-background-color: #eef2f8; }
+.ruler-odd { -fx-background-color: #fdf6ea; }
 
 /* validation */
 .issue-error { -fx-text-fill: -debit; }

@@ -59,7 +59,7 @@
                 </Button>
                 <Button text="Report" onAction="#onExportReport"/>
                 <Separator/>
-                <ToggleButton fx:id="notRawToggle" text="Not raw mode">
+                <ToggleButton fx:id="presentToggle" text="Present mode">
                     <tooltip><Tooltip text="Show the file as collapsible forms instead of raw 94-character lines"/></tooltip>
                 </ToggleButton>
                 <ToggleButton fx:id="editModeToggle" text="Edit mode">
@@ -77,7 +77,7 @@
                     <Tab fx:id="fileTab" text="File">
                         <StackPane fx:id="fileStack">
                             <VBox fx:id="rawPane">
-                                <Label fx:id="ruler" styleClass="ruler"/>
+                                <HBox fx:id="ruler" styleClass="ruler"/>
                                 <ListView fx:id="rawList" styleClass="raw-list" VBox.vgrow="ALWAYS"/>
                             </VBox>
                         </StackPane>

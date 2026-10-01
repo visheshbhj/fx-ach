@@ -30,7 +30,7 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 
 /**
- * "Not raw mode": the file laid out as nested collapsible forms (file → batches → entries →
+ * "Present mode": the file laid out as nested collapsible forms (file → batches → entries →
  * addenda), each titled with a plain-English summary. Field grids are built lazily on expand.
  */
 class FormView extends ScrollPane {
