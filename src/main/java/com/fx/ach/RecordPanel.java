@@ -1,6 +1,7 @@
 package com.fx.ach;
 
 import com.afrunt.jach.domain.ACHRecord;
+import com.fx.ach.core.AchBulkEdit;
 import com.fx.ach.core.AchCodes;
 import com.fx.ach.core.AchService;
 import com.fx.ach.core.FieldView;
@@ -29,8 +30,8 @@ import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 
 /**
- * The right-hand vertical form for the selected record. Tracks unsaved edits so the caller can
- * ask before they are lost.
+ * The right-hand vertical form for the selected record, or for several selected records of one
+ * type edited together. Tracks unsaved edits so the caller can ask before they are lost.
  */
 class RecordPanel extends BorderPane {
 
@@ -57,7 +58,7 @@ class RecordPanel extends BorderPane {
             "Change Code", AchCodes.CHANGE_CODE);
 
     private final AchService service;
-    private final BiConsumer<ACHRecord, Map<FieldView, String>> onApply;
+    private final BiConsumer<List<ACHRecord>, Map<FieldView, String>> onApply;
     private final RawHandler onRaw;
     private final TextArea rawArea = new TextArea();
     private final Label rawInfo = new Label();
@@ -71,8 +72,12 @@ class RecordPanel extends BorderPane {
     private final Label subtitle = new Label();
     private final Label modeHint = new Label();
     private ACHRecord record;
+    /** The records the edits go to: just {@link #record}, or every selected record of its type. */
+    private List<ACHRecord> group = List.of();
+    private String summary = "";
+    private int ignored;
 
-    RecordPanel(AchService service, BiConsumer<ACHRecord, Map<FieldView, String>> onApply, RawHandler onRaw) {
+    RecordPanel(AchService service, BiConsumer<List<ACHRecord>, Map<FieldView, String>> onApply, RawHandler onRaw) {
         this.service = service;
         this.onApply = onApply;
         this.onRaw = onRaw;
@@ -92,7 +97,7 @@ class RecordPanel extends BorderPane {
         apply.setOnAction(e -> apply());
         Button revert = new Button("Revert");
         revert.disableProperty().bind(dirty.not());
-        revert.setOnAction(e -> show(record, subtitle.getText()));
+        revert.setOnAction(e -> revert());
         Label unsaved = new Label("● unsaved changes");
         unsaved.getStyleClass().add("unsaved");
         unsaved.visibleProperty().bind(dirty);
@@ -110,7 +115,7 @@ class RecordPanel extends BorderPane {
         scroll.setFitToWidth(true);
         setCenter(scroll);
         setEditMode(false);
-        show(null, "");
+        clear();
     }
 
     /**
@@ -176,6 +181,10 @@ class RecordPanel extends BorderPane {
         return record;
     }
 
+    List<ACHRecord> records() {
+        return group;
+    }
+
     boolean isDirty() {
         return dirty.get();
     }
@@ -192,7 +201,7 @@ class RecordPanel extends BorderPane {
 
     void apply() {
         if (record != null) {
-            onApply.accept(record, edits());
+            onApply.accept(group, edits());
         }
     }
 
@@ -209,8 +218,25 @@ class RecordPanel extends BorderPane {
         }
     }
 
-    void show(ACHRecord record, String summary) {
+    void clear() {
+        show(null, List.of(), "", 0);
+    }
+
+    /** Throws away unapplied edits. */
+    void revert() {
+        show(record, group, summary, ignored);
+    }
+
+    /**
+     * Shows {@code record}, or when {@code group} holds several records of its type, the fields they
+     * share: each shows the common value, or is blank where the records differ, and a changed field
+     * is set on all of them. {@code ignored} counts selected records of other types.
+     */
+    void show(ACHRecord record, List<ACHRecord> group, String summary, int ignored) {
         this.record = record;
+        this.group = record == null ? List.of() : group.isEmpty() ? List.of(record) : List.copyOf(group);
+        this.summary = summary;
+        this.ignored = ignored;
         inputs.clear();
         controlsByStart.clear();
         fieldsBox.getChildren().clear();
@@ -221,12 +247,26 @@ class RecordPanel extends BorderPane {
             subtitle.setText("Select a record in the file to see and edit its fields here.");
             return;
         }
-        title.setText(AchService.recordTypeLabel(record) + " · " + service.recordName(record)
-                + (record.getLineNumber() > 0 ? "  (line " + record.getLineNumber() + ")" : ""));
-        subtitle.setText(summary);
-
-        fieldsBox.getChildren().add(rawPane);
-        List<FieldView> fields = service.fields(record);
+        boolean many = this.group.size() > 1;
+        List<FieldView> fields;
+        if (many) {
+            title.setText(this.group.size() + " " + AchService.recordTypeLabel(record) + " records selected");
+            subtitle.setText("A field you change here is set on all of them. Blank fields have different values; "
+                    + "leave them blank to keep each record's own value."
+                    + (ignored > 0 ? " " + ignored + " selected record(s) of other types are not included." : ""));
+            fields = AchBulkEdit.commonFields(service, this.group).stream().map(f -> {
+                String common = AchBulkEdit.commonValue(service, this.group, f);
+                return common == null
+                        ? new FieldView(f.name(), f.start(), f.end(), f.raw(), "", "", f.inclusion(), true, f.metadata())
+                        : f;
+            }).toList();
+        } else {
+            title.setText(AchService.recordTypeLabel(record) + " · " + service.recordName(record)
+                    + (record.getLineNumber() > 0 ? "  (line " + record.getLineNumber() + ")" : ""));
+            subtitle.setText(summary);
+            fieldsBox.getChildren().add(rawPane);
+            fields = service.fields(record);
+        }
         for (int i = 0; i < fields.size(); i++) {
             FieldView f = fields.get(i);
             Label name = new Label(f.name());
@@ -279,6 +319,9 @@ class RecordPanel extends BorderPane {
         }
         TextField text = new TextField(f.value());
         text.getStyleClass().add("mono");
+        if (group.size() > 1 && f.value().isEmpty()) {
+            text.setPromptText("(values differ)");
+        }
         text.setEditable(f.editable());
         if (!f.editable()) {
             text.getStyleClass().add("read-only");

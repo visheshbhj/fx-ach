@@ -10,6 +10,7 @@ import com.afrunt.jach.domain.BatchHeader;
 import com.afrunt.jach.domain.EntryDetail;
 import com.afrunt.jach.domain.FileControl;
 import com.fx.ach.core.AchBuilder;
+import com.fx.ach.core.AchBulkEdit;
 import com.fx.ach.core.AchCodes;
 import com.fx.ach.core.AchControls;
 import com.fx.ach.core.AchException;
@@ -29,6 +30,7 @@ import com.fx.ach.bai2.Bai2Parser;
 import javafx.application.Platform;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
+import javafx.collections.ListChangeListener;
 import javafx.fxml.FXML;
 import javafx.geometry.Pos;
 import javafx.scene.control.Alert;
@@ -42,6 +44,7 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuButton;
 import javafx.scene.control.MenuItem;
+import javafx.scene.control.SelectionMode;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.Tab;
@@ -127,10 +130,22 @@ public class MainController {
             buildRuler(ruler);
             rawList.getStyleClass().add("raw-list");
             rawList.setCellFactory(l -> new RawCell());
+            // Ctrl/Shift+click several records of one type to edit their fields together in the record panel
+            rawList.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
+            rawList.getSelectionModel().getSelectedItems().addListener((ListChangeListener<ACHRecord>) c -> {
+                if (!syncing && !recordPanel.isDirty()) {
+                    Platform.runLater(() -> {
+                        ACHRecord focused = MainController.this.selected; // not this session's stashed copy
+                        if (current == this && focused != null && !recordPanel.isDirty()) {
+                            showInPanel(focused);
+                        }
+                    });
+                }
+            });
             rawList.getSelectionModel().selectedItemProperty().addListener((o, previous, r) -> {
                 if (!syncing && r != null && r != selected && !requestSelect(r, false)) {
                     syncing = true;
-                    rawList.getSelectionModel().select(selected);
+                    rawList.getSelectionModel().clearAndSelect(rawList.getItems().indexOf(selected));
                     syncing = false;
                 }
             });
@@ -334,7 +349,7 @@ public class MainController {
         if (bai2 != null) {
             bai2.setPresent(presentToggle.isSelected());
         }
-        recordPanel.show(null, "");
+        recordPanel.clear();
         if (s == null) {
             doc = null;
             file = null;
@@ -392,7 +407,7 @@ public class MainController {
             return false;
         }
         s.closed = true;
-        recordPanel.show(null, "");
+        recordPanel.clear();
         return true;
     }
 
@@ -490,19 +505,33 @@ public class MainController {
 
     private void showRecord(ACHRecord record, boolean scroll) {
         selected = record;
-        recordPanel.show(record, describe(record));
         syncing = true;
         try {
-            rawList.getSelectionModel().select(record);
+            if (!rawList.getSelectionModel().getSelectedItems().contains(record)) {
+                rawList.getSelectionModel().clearAndSelect(rawList.getItems().indexOf(record)); // keep a Ctrl/Shift+click multi-selection
+            }
             if (scroll) {
                 rawList.scrollTo(Math.max(0, rawList.getSelectionModel().getSelectedIndex() - 3));
             }
         } finally {
             syncing = false;
         }
+        showInPanel(record);
         if (formView.isVisible()) {
             formView.reveal(record);
         }
+    }
+
+    /** Shows the record in the panel, together with any other selected records of the same type. */
+    private void showInPanel(ACHRecord record) {
+        List<ACHRecord> picked = presentToggle.isSelected() ? List.of() : List.copyOf(rawList.getSelectionModel().getSelectedItems());
+        List<ACHRecord> group = AchService.records(doc).stream()
+                .filter(r -> r == record || picked.contains(r) && r.getRecordTypeCode().equals(record.getRecordTypeCode()))
+                .toList();
+        if (group.equals(recordPanel.records())) {
+            return;
+        }
+        recordPanel.show(record, group, describe(record), Math.max(0, picked.size() - group.size()));
     }
 
     /** Returns true when there are no unapplied edits left (applied or discarded). */
@@ -511,21 +540,23 @@ public class MainController {
             return true;
         }
         if (editModeToggle.isSelected()) {
-            return applyEdits(recordPanel.record(), recordPanel.edits());
+            return applyEdits(recordPanel.records(), recordPanel.edits());
         }
         ButtonType apply = new ButtonType("Apply changes", ButtonBar.ButtonData.YES);
         ButtonType discard = new ButtonType("Discard", ButtonBar.ButtonData.NO);
         Alert alert = new Alert(Alert.AlertType.CONFIRMATION,
-                "You changed " + recordPanel.edits().size() + " field(s) of this record without applying them.\n"
+                "You changed " + recordPanel.edits().size() + " field(s) of "
+                        + (recordPanel.records().size() > 1 ? "the " + recordPanel.records().size() + " selected records" : "this record")
+                        + " without applying them.\n"
                         + "Tip: turn on Edit mode to apply changes automatically.", apply, discard, ButtonType.CANCEL);
         alert.initOwner(stage);
         alert.setHeaderText("Apply your changes?");
         ButtonType choice = alert.showAndWait().orElse(ButtonType.CANCEL);
         if (choice == apply) {
-            return applyEdits(recordPanel.record(), recordPanel.edits());
+            return applyEdits(recordPanel.records(), recordPanel.edits());
         }
         if (choice == discard) {
-            recordPanel.show(recordPanel.record(), describe(recordPanel.record()));
+            recordPanel.revert();
             return true;
         }
         return false;
@@ -909,7 +940,7 @@ public class MainController {
     @FXML
     private void onUndo() {
         if (recordPanel.isDirty()) {
-            recordPanel.show(recordPanel.record(), describe(recordPanel.record()));
+            recordPanel.revert();
             status("Unapplied field changes discarded.");
             return;
         }
@@ -994,25 +1025,38 @@ public class MainController {
         }
     }
 
-    /** Applies field edits from the record panel. Returns false if they were rejected. */
-    boolean applyEdits(ACHRecord record, Map<FieldView, String> edits) {
+    /**
+     * Applies field edits from the record panel to its record, or to every selected record when
+     * several are edited together. Returns false if they were rejected.
+     */
+    boolean applyEdits(List<ACHRecord> records, Map<FieldView, String> edits) {
         if (edits.isEmpty()) {
-            recordPanel.show(record, describe(record));
+            recordPanel.revert();
             return true;
         }
-        boolean isControl = record instanceof BatchControl || record instanceof FileControl;
-        return commit("Updated " + edits.size() + " field(s)", () -> {
-            ACHRecord updated = record;
-            for (Map.Entry<FieldView, String> edit : edits.entrySet()) {
-                FieldView current = service.fields(updated).stream()
-                        .filter(f -> f.start() == edit.getKey().start()).findFirst().orElseThrow();
-                updated = service.withField(updated, current, edit.getValue());
-            }
-            AchService.replace(doc, record, updated);
-            if (!isControl) {
+        boolean controls = records.stream().allMatch(r -> r instanceof BatchControl || r instanceof FileControl);
+        boolean renumber = records.size() > 1 && AchBulkEdit.changesOdfi(edits);
+        String what = records.size() > 1 ? " on " + records.size() + " records" : "";
+        List<Integer> positions = records.stream().map(this::indexOf).toList();
+        boolean applied = commit("Updated " + edits.size() + " field(s)" + what + (renumber ? " and renumbered trace numbers" : ""), () -> {
+            AchBulkEdit.apply(service, doc, records, edits);
+            if (renumber) {
+                AchBuilder.finish(doc); // trace numbers start with the originating bank
+            } else if (!controls) {
                 AchControls.recalculate(doc);
             }
         }, null);
+        if (applied && positions.size() > 1 && !presentToggle.isSelected()) {
+            // keep the same records selected so more of their fields can be changed together
+            syncing = true;
+            try {
+                positions.forEach(rawList.getSelectionModel()::select);
+            } finally {
+                syncing = false;
+            }
+            showInPanel(selected);
+        }
+        return applied;
     }
 
     /**
@@ -1032,7 +1076,7 @@ public class MainController {
             }
             dirty = true;
             selected = nextSelection == null ? recordAt(index) : nextSelection.get();
-            recordPanel.show(null, "");
+            recordPanel.clear();
             refresh();
             status(description + ".");
             return true;
@@ -1052,7 +1096,7 @@ public class MainController {
         stash();
         updateTitle();
         if (doc == null) {
-            recordPanel.show(null, "");
+            recordPanel.clear();
             if (bai2 != null) {
                 Bai2View view = bai2;
                 showProblems(view.issues().stream().map(i -> new Problem(i.severity() == Bai2Issue.Severity.ERROR, i.toString(),

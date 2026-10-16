@@ -9,6 +9,9 @@ A desktop app for reading, building and editing NACHA ACH files, with every
   international/IAT) or from scratch, using forms or by pasting raw lines.
 - **Edit** any field. Batch and file control totals, entry hashes and counts
   are recalculated for you.
+- **Edit several records at once**: Ctrl/Shift+click records of the same type
+  (e.g. every batch header) and the fields you change in the record panel are
+  set on all of them. Changing the originating bank also renumbers trace numbers.
 - **Validate** control totals, hashes, routing check digits, trace numbers,
   addenda indicators and more, and jump straight to the record with the problem.
 - **Read BAI2** bank balance and transaction reports (read-only), with type
