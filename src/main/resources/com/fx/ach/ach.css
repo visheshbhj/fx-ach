@@ -118,3 +118,7 @@
 
 /* Highlight the window while files are dragged over it. */
 .drop-target { -fx-border-color: -accent; -fx-border-width: 3; -fx-border-style: dashed; }
+
+/* record editor minimize / maximize */
+.window-button { -fx-padding: 0 6; -fx-font-size: 12px; -fx-background-color: transparent; -fx-text-fill: -muted; }
+.window-button:hover { -fx-background-color: #dfe4eb; -fx-background-radius: 4; }

@@ -6,9 +6,12 @@ import com.fx.ach.core.AchCodes;
 import com.fx.ach.core.AchService;
 import com.fx.ach.core.FieldView;
 import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.SimpleBooleanProperty;
+import javafx.beans.property.SimpleObjectProperty;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Group;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Control;
@@ -21,6 +24,9 @@ import javafx.scene.control.TitledPane;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Pane;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 
 import java.util.LinkedHashMap;
@@ -44,6 +50,14 @@ class RecordPanel extends BorderPane {
             this.label = label;
         }
     }
+
+    /** Whether the panel shares the window, is collapsed to a thin strip, or takes the whole area. */
+    enum Size {
+        MINIMIZED, NORMAL, MAXIMIZED
+    }
+
+    private static final double NORMAL_MIN_WIDTH = 320;
+    private static final double MINIMIZED_WIDTH = 30;
 
     interface RawHandler {
         void handle(RawAction action, ACHRecord record, String text);
@@ -71,6 +85,9 @@ class RecordPanel extends BorderPane {
     private final Label title = new Label();
     private final Label subtitle = new Label();
     private final Label modeHint = new Label();
+    private final ObjectProperty<Size> size = new SimpleObjectProperty<>(Size.NORMAL);
+    private final VBox head;
+    private final VBox collapsedBar;
     private ACHRecord record;
     /** The records the edits go to: just {@link #record}, or every selected record of its type. */
     private List<ACHRecord> group = List.of();
@@ -106,16 +123,71 @@ class RecordPanel extends BorderPane {
 
         Label caption = new Label("RECORD");
         caption.getStyleClass().add("pane-title-inline");
-        VBox head = new VBox(4, caption, title, subtitle, buttons, modeHint);
+        Button minimize = windowButton("–", "Minimize the record editor");
+        minimize.setOnAction(e -> setSize(Size.MINIMIZED));
+        Button maximize = windowButton("□", "Maximize the record editor");
+        maximize.setOnAction(e -> setSize(size.get() == Size.MAXIMIZED ? Size.NORMAL : Size.MAXIMIZED));
+        size.addListener((o, was, now) -> {
+            boolean max = now == Size.MAXIMIZED;
+            maximize.setText(max ? "❐" : "□");
+            maximize.getTooltip().setText(max ? "Restore the record editor" : "Maximize the record editor");
+        });
+        Pane spacer = new Pane();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+        HBox captionRow = new HBox(4, caption, spacer, minimize, maximize);
+        captionRow.setAlignment(Pos.CENTER_LEFT);
+        head = new VBox(4, captionRow, title, subtitle, buttons, modeHint);
         head.setPadding(new Insets(8, 12, 8, 12));
         head.getStyleClass().add("record-panel-head");
         setTop(head);
 
+        Button restore = windowButton("◀", "Restore the record editor");
+        restore.setOnAction(e -> setSize(Size.NORMAL));
+        Label sideCaption = new Label("RECORD");
+        sideCaption.getStyleClass().add("pane-title-inline");
+        sideCaption.setRotate(-90);
+        collapsedBar = new VBox(10, restore, new Group(sideCaption));
+        collapsedBar.setAlignment(Pos.TOP_CENTER);
+        collapsedBar.setPadding(new Insets(6, 0, 6, 0));
+        collapsedBar.getStyleClass().add("record-panel-head");
+        collapsedBar.setOnMouseClicked(e -> setSize(Size.NORMAL));
+
         fieldsBox.setPadding(new Insets(10, 12, 16, 12));
         scroll.setFitToWidth(true);
         setCenter(scroll);
+        setMinWidth(NORMAL_MIN_WIDTH);
+        size.addListener((o, was, now) -> applySize(now));
         setEditMode(false);
         clear();
+    }
+
+    private static Button windowButton(String text, String tip) {
+        Button b = new Button(text);
+        b.getStyleClass().add("window-button");
+        b.setTooltip(new Tooltip(tip));
+        b.setFocusTraversable(false);
+        return b;
+    }
+
+    ObjectProperty<Size> sizeProperty() {
+        return size;
+    }
+
+    Size getSize() {
+        return size.get();
+    }
+
+    void setSize(Size value) {
+        size.set(value);
+    }
+
+    /** A minimized panel shows only a narrow strip; its width is capped so the split divider stays put. */
+    private void applySize(Size now) {
+        boolean minimized = now == Size.MINIMIZED;
+        setTop(minimized ? null : head);
+        setCenter(minimized ? collapsedBar : scroll);
+        setMinWidth(minimized ? MINIMIZED_WIDTH : NORMAL_MIN_WIDTH);
+        setMaxWidth(minimized ? MINIMIZED_WIDTH : Region.USE_COMPUTED_SIZE);
     }
 
     /**

@@ -47,6 +47,14 @@
                     </MenuItem>
                     <MenuItem fx:id="renumberItem" text="Renumber _Trace Numbers" onAction="#onRenumber"/>
                 </Menu>
+                <Menu text="_View">
+                    <MenuItem fx:id="growEditorItem" text="_Enlarge Record Editor" onAction="#onGrowEditor">
+                        <accelerator><KeyCodeCombination code="PLUS" control="UP" shift="UP" alt="UP" meta="UP" shortcut="DOWN"/></accelerator>
+                    </MenuItem>
+                    <MenuItem fx:id="shrinkEditorItem" text="_Shrink Record Editor" onAction="#onShrinkEditor">
+                        <accelerator><KeyCodeCombination code="MINUS" control="UP" shift="UP" alt="UP" meta="UP" shortcut="DOWN"/></accelerator>
+                    </MenuItem>
+                </Menu>
             </MenuBar>
             <ToolBar>
                 <MenuButton fx:id="newButton" text="New"/>

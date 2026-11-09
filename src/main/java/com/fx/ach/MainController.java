@@ -54,6 +54,7 @@ import javafx.scene.control.ToggleButton;
 import javafx.scene.control.Tooltip;
 import javafx.scene.input.DragEvent;
 import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
 import javafx.scene.input.TransferMode;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
@@ -92,7 +93,7 @@ public class MainController {
     @FXML private Label statusLabel;
     // ACH editing controls, disabled while a (read-only) BAI2 tab is active
     @FXML private MenuItem saveItem, saveAsItem, saveTemplateItem, undoItem, addBatchItem, addEntryItem, addAddendaItem,
-            deleteItem, recalculateItem, renumberItem;
+            deleteItem, recalculateItem, renumberItem, growEditorItem, shrinkEditorItem;
     @FXML private Button saveButton, addBatchButton, addEntryButton, deleteButton, fixTotalsButton;
 
     private final AchService service = new AchService();
@@ -102,6 +103,8 @@ public class MainController {
     private boolean switchingTabs;
     private final BooleanProperty bai2Active = new SimpleBooleanProperty();
     private double recordPanelDivider = 0.66;
+    /** The file tabs and validation list: the left side of {@link #mainSplit}. */
+    private javafx.scene.Node filePane;
 
     /** One line in the validation list, for an ACH or a BAI2 tab. {@code jump} may be null. */
     private record Problem(boolean error, String text, Runnable jump) {
@@ -193,10 +196,11 @@ public class MainController {
         rebuildNewMenus();
 
         recordPanel = new RecordPanel(service, this::applyEdits, this::rawAction);
-        recordPanel.setMinWidth(320);
+        filePane = mainSplit.getItems().get(0);
         mainSplit.getItems().add(recordPanel);
         mainSplit.setDividerPositions(0.66);
         SplitPane.setResizableWithParent(recordPanel, false);
+        recordPanel.sizeProperty().addListener((o, was, now) -> resizeRecordPanel(was, now));
 
         emptyPlaceholder.visibleProperty().bind(javafx.beans.binding.Bindings.isEmpty(tabs.getTabs()));
         tabs.visibleProperty().bind(emptyPlaceholder.visibleProperty().not());
@@ -258,6 +262,25 @@ public class MainController {
                 problem.jump().run();
             }
         });
+
+        // Ctrl + / Ctrl - (main or numpad keys, with or without Shift) step the record editor's size.
+        root.addEventFilter(KeyEvent.KEY_PRESSED, e -> {
+            if (!e.isShortcutDown() || e.isAltDown()) {
+                return;
+            }
+            int step = switch (e.getCode()) {
+                case PLUS, EQUALS, ADD -> 1;
+                case MINUS, SUBTRACT -> -1;
+                default -> 0;
+            };
+            if (step != 0) {
+                stepRecordPanel(step);
+                e.consume();
+            }
+        });
+        for (MenuItem item : List.of(growEditorItem, shrinkEditorItem)) {
+            item.disableProperty().bind(bai2Active);
+        }
 
         // Filters on the scene root run before child controls (text areas, tables) can claim the drag.
         root.addEventFilter(DragEvent.DRAG_OVER, e -> {
@@ -380,8 +403,43 @@ public class MainController {
             mainSplit.getItems().add(recordPanel);
             mainSplit.setDividerPositions(recordPanelDivider);
         } else {
+            recordPanel.setSize(RecordPanel.Size.NORMAL); // bring the file view back before hiding the panel
             recordPanelDivider = mainSplit.getDividerPositions()[0];
             mainSplit.getItems().remove(recordPanel);
+        }
+    }
+
+    /** Minimized → normal → maximized, one step at a time; no-op on BAI2 tabs, which have no record editor. */
+    private void stepRecordPanel(int step) {
+        if (!mainSplit.getItems().contains(recordPanel)) {
+            return;
+        }
+        RecordPanel.Size[] sizes = RecordPanel.Size.values();
+        int next = Math.clamp(recordPanel.getSize().ordinal() + step, 0, sizes.length - 1);
+        recordPanel.setSize(sizes[next]);
+    }
+
+    @FXML
+    private void onGrowEditor() {
+        stepRecordPanel(1);
+    }
+
+    @FXML
+    private void onShrinkEditor() {
+        stepRecordPanel(-1);
+    }
+
+    /** Minimize/maximize of the record editor: only the panel and the file view's share of the split change. */
+    private void resizeRecordPanel(RecordPanel.Size was, RecordPanel.Size now) {
+        if (was == RecordPanel.Size.NORMAL) {
+            recordPanelDivider = mainSplit.getDividerPositions()[0];
+        } else if (was == RecordPanel.Size.MAXIMIZED) {
+            mainSplit.getItems().add(0, filePane);
+        }
+        switch (now) {
+            case MAXIMIZED -> mainSplit.getItems().remove(filePane);
+            case MINIMIZED -> mainSplit.setDividerPositions(1);
+            case NORMAL -> mainSplit.setDividerPositions(recordPanelDivider);
         }
     }
 
